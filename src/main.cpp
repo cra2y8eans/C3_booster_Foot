@@ -74,7 +74,9 @@ OneButton function;
 #define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 5分钟*60秒*1000毫秒
 #define R1 10000
 #define R2 9950
-float batvolts, voltsPercentage;
+
+// float batvolts, voltsPercentage;
+bool lowBatteryAlerted = false;
 
 BatReading battery;
 
@@ -121,14 +123,14 @@ void batteryFirstCheck() {
   // 开机执行一次，提示电池电量
   battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE); // 引脚、R1阻值、R2阻值、最大电压、最小（报警）电压
   battery.readMilliVolts(BATTERY_READING_AVERAGE);
-  batvolts        = battery._voltage;
-  voltsPercentage = battery._voltsPercentage;
+  // batvolts        = battery._voltage;
+  // voltsPercentage = battery._voltsPercentage;
   // 根据电量百分比鸣叫
-  if (voltsPercentage < 30) {
+  if (battery._voltsPercentage < 30) {
     buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-  } else if (voltsPercentage < 60) {
+  } else if (battery._voltsPercentage < 60) {
     buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-  } else if (voltsPercentage < 80) {
+  } else if (battery._voltsPercentage < 80) {
     buzzer(2, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
   } else {
     buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
@@ -182,13 +184,27 @@ void functionButton() {
 void batteryCheck(void* pvParameter) {
   while (1) {
     battery.readMilliVolts(BATTERY_READING_AVERAGE);
-    batvolts        = battery._voltage;
-    voltsPercentage = battery._voltsPercentage;
+    // batvolts        = battery._voltage;
+    // voltsPercentage = battery._voltsPercentage;
     // 低电量报警
-    if (voltsPercentage < BATTERY_MIN_PERCENTAGE) {
-      buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    if (battery._voltsPercentage < BATTERY_MIN_PERCENTAGE + 10) {
+      if (!lowBatteryAlerted) {
+        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+        lowBatteryAlerted = true;
+      } else {
+        lowBatteryAlerted = false;
+      }
+#if DEBUG
+      Serial.print("!!! 低电量报警 !!! 电量: ");
+      Serial.print(battery._voltsPercentage);
+      Serial.println("%");
+#endif
     }
-    vTaskDelay(BATTERY_READING_INTERVAL * voltsPercentage / 100 / portTICK_PERIOD_MS); // 根据电量百分比调整检测频率，电量越低检测越频繁
+    int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
+    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                           // 最小间隔1分钟
+      delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS;
+    }
+    vTaskDelay(delayTime);
   }
 }
 
@@ -229,6 +245,10 @@ void setup() {
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
+
+#if DEBUG
+  Serial.println("脚控初始化完成");
+#endif
 }
 void loop() {
 }
