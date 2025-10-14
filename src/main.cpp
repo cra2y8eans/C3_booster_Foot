@@ -1,4 +1,5 @@
 #include "OneButton.h"
+#include "batteryReading.hpp"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -34,6 +35,9 @@ bool esp_now_connected;
 #define SDA_PIN 19
 #define SCL_PIN 18
 
+// float yaw, gyro_Z; // Z轴角度，Z轴角速度
+// MPU6050 mpu6050(Wire);
+
 /*----------------------------------------------- 操控 -----------------------------------------------*/
 
 #define STEP_TURN_LEFT 5
@@ -63,12 +67,16 @@ OneButton function;
 /*----------------------------------------------- 电池电量 -----------------------------------------------*/
 
 #define BATTERY_PIN 4
-#define BATTERY_MAX_VALUE 4.2             // 电池最大电量
-#define BATTERY_MIN_VALUE 3.2             // 电池最小电量
-#define BATTERY_MIN_PERCENTAGE 20         // 电池最低百分比
-#define PAD_BATTERY_READING_INTERVAL 3000 // 采样间隔
+#define BATTERY_MAX_VALUE 4.2                  // 电池最大电量
+#define BATTERY_MIN_VALUE 3.2                  // 电池最小电量
+#define BATTERY_MIN_PERCENTAGE 20              // 电池最低百分比
+#define BATTERY_READING_AVERAGE 50             // 采样次数
+#define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 5分钟*60秒*1000毫秒
 #define R1 10000
 #define R2 9950
+float batvolts, voltsPercentage;
+
+BatReading battery;
 
 /*----------------------------------------------- 自定义函数 -----------------------------------------------*/
 
@@ -108,6 +116,28 @@ void buzzer(uint8_t times, int duration, int interval) {
   }
 }
 
+// 电量开机初检
+void batteryFirstCheck() {
+  analogReadResolution(12);
+  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE); // 引脚、R1阻值、R2阻值、最大电压、最小（报警）电压
+  battery.readMilliVolts(BATTERY_READING_AVERAGE);
+  batvolts        = battery._voltage;
+  voltsPercentage = battery._voltsPercentage;
+
+  if (voltsPercentage < 30) {
+    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+  }
+  if (30 < voltsPercentage < 60) {
+    buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+  }
+  if (60 < voltsPercentage < 80) {
+    buzzer(2, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+  }
+  if (80 < voltsPercentage) {
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+  }
+}
+
 // ESP NOW
 void esp_now_connect() {
   WiFi.mode(WIFI_STA); // 设置wifi为STA模式
@@ -127,10 +157,7 @@ void esp_now_connect() {
     Serial.println("ESP NOW 初始化失败，正在重连...");
 #endif
     // 报警
-
-    /*LED 代码*/
-
-    buzzer(3, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+    buzzer(2, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
     // 重连
     esp_now_init();                                // 初始化ESP NOW
     esp_now_register_send_cb(OnDataSent);          // 注册发送成功的回调函数
@@ -145,10 +172,54 @@ void esp_now_connect() {
 #if DEBUG
   Serial.println("ESP NOW 初始化成功");
 #endif
-  // LED相关代码
+  digitalWrite(RGB_LED_PIN, HIGH);
 }
 
-void functionButton() { }
+// 功能按键回调函数
+void functionButton() {
+  footPad.stepData[3] = !footPad.stepData[3];
+  buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+}
+
+// 功能按键检测任务
+void functionTask(void* pvParameter) {
+  function.setup(FUNCTION_PIN, INPUT_PULLUP);
+  function.attachLongPressStart(functionButton);
+  function.setPressMs(600 / portTICK_PERIOD_MS);
+  while (1) {
+    function.tick();
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+// 电池电量读取任务
+void batteryCheck(void* pvParameter) {
+  while (1) {
+    battery.readMilliVolts(BATTERY_READING_AVERAGE);
+    batvolts        = battery._voltage;
+    voltsPercentage = battery._voltsPercentage;
+    // 低电量报警
+    if (voltsPercentage < BATTERY_MIN_PERCENTAGE) {
+      buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    }
+    vTaskDelay(BATTERY_READING_INTERVAL * voltsPercentage / 100 / portTICK_PERIOD_MS); // 根据电量百分比调整检测频率，电量越低检测越频繁
+  }
+}
+
+// 数据发送任务
+void dataTransmit(void* pvParameter) {
+  TickType_t       xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xPeriod       = pdMS_TO_TICKS(12.5); // 频率 80Hz → 周期为 1/80 = 0.0125 秒 = 12.5 毫秒
+  while (1) {
+    footPad.stepData[0] = digitalRead(STEP_TURN_LEFT);  // 左转
+    footPad.stepData[1] = digitalRead(STEP_TURN_RIGHT); // 右转
+    footPad.stepData[2] = digitalRead(THROTTLE_PIN);    // 电推油门
+    footPad.stepSpeed   = analogRead(STEP_SPEED);
+
+    esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad));
+    vTaskDelayUntil(&xLastWakeTime, xPeriod);
+  }
+}
 /*-------------------------------------------------------------------------------------------------------------*/
 
 void setup() {
@@ -161,10 +232,12 @@ void setup() {
   pinMode(THROTTLE_PIN, INPUT_PULLUP);
   pinMode(FUNCTION_PIN, INPUT_PULLUP);
 
-  analogReadResolution(12);
   esp_now_connect();
-  function.setup(FUNCTION_PIN, INPUT_PULLUP);
-  function.attachDoubleClick(functionButton);
+  batteryFirstCheck();
+
+  xTaskCreate(functionTask, "functionTask", 1024 * 1, NULL, 1, NULL);
+  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 1, NULL, 1, NULL);
+  xTaskCreate(batteryCheck, "batteryCheck", 1024 * 1, NULL, 1, NULL);
 }
 void loop() {
 }
