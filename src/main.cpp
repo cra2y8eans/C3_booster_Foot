@@ -135,7 +135,16 @@ void batteryFirstCheck() {
   } else {
     buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
   }
+#if DEBUG
+  Serial.print("电池电压: ");
+  Serial.print(battery._voltage);
+  Serial.print("V, 电量百分比: ");
+  Serial.print(battery._voltsPercentage);
+  Serial.println("%");
+#endif
 }
+
+// ESP NOW
 
 // ESP NOW
 void esp_now_connect() {
@@ -178,14 +187,26 @@ void esp_now_connect() {
 void functionButton() {
   footPad.stepData[3] = !footPad.stepData[3];
   buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+#if DEBUG
+  if (footPad.stepData[3]) {
+    Serial.println("功能键按下");
+  }
+#endif
 }
 
 // 电池电量读取任务
 void batteryCheck(void* pvParameter) {
   while (1) {
     battery.readMilliVolts(BATTERY_READING_AVERAGE);
-    // batvolts        = battery._voltage;
-    // voltsPercentage = battery._voltsPercentage;
+// batvolts        = battery._voltage;
+// voltsPercentage = battery._voltsPercentage;
+#if DEBUG
+    Serial.print("电池电压: ");
+    Serial.print(battery._voltage);
+    Serial.print("V, 电量百分比: ");
+    Serial.print(battery._voltsPercentage);
+    Serial.println("%");
+#endif
     // 低电量报警
     if (battery._voltsPercentage < BATTERY_MIN_PERCENTAGE + 10) {
       if (!lowBatteryAlerted) {
@@ -222,6 +243,18 @@ void dataTransmit(void* pvParameter) {
     footPad.stepData[2] = digitalRead(THROTTLE_PIN);    // 电推油门
     footPad.stepSpeed   = analogRead(STEP_SPEED);
 
+#if DEBUG
+    if (footPad.stepData[0] == LOW && footPad.stepData[1] == HIGH) {
+      Serial.println("左转");
+      Serial.printf("步进电机转速: %d\n", footPad.stepSpeed);
+    } else if (footPad.stepData[0] == HIGH && footPad.stepData[1] == LOW) {
+      Serial.println("右转");
+      Serial.printf("步进电机转速: %d\n", footPad.stepSpeed);
+    }
+    if (footPad.stepData[2] == LOW) {
+      Serial.println("踩油门");
+    }
+#endif
     esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad));
     vTaskDelayUntil(&xLastWakeTime, xPeriod);
   }
