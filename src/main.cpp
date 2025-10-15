@@ -87,14 +87,8 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
   // 如果发送成功
   if (status == ESP_NOW_SEND_SUCCESS) {
     esp_now_connected = true;
-#if DEBUG
-    Serial.println("数据发送成功");
-#endif
   } else {
     esp_now_connected = false;
-#if DEBUG
-    Serial.println("数据发送失败");
-#endif
   }
 }
 
@@ -143,8 +137,6 @@ void batteryFirstCheck() {
   Serial.println("%");
 #endif
 }
-
-// ESP NOW
 
 // ESP NOW
 void esp_now_connect() {
@@ -207,23 +199,25 @@ void batteryCheck(void* pvParameter) {
     Serial.print(battery._voltsPercentage);
     Serial.println("%");
 #endif
+    int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
+    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                           // 最小间隔1分钟
+      delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS;
+    }
     // 低电量报警
     if (battery._voltsPercentage < BATTERY_MIN_PERCENTAGE + 10) {
       if (!lowBatteryAlerted) {
         buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
         lowBatteryAlerted = true;
+#if DEBUG
+        Serial.print("!!! 低电量报警 !!! 电量: ");
+        Serial.print(battery._voltsPercentage);
+        Serial.println("%");
+        Serial.println("/*****************************/");
+        Serial.printf("下一次检测将在 %d 分钟后\n", delayTime * battery._voltsPercentage / 100 / 60000);
+#endif
       } else {
         lowBatteryAlerted = false;
       }
-#if DEBUG
-      Serial.print("!!! 低电量报警 !!! 电量: ");
-      Serial.print(battery._voltsPercentage);
-      Serial.println("%");
-#endif
-    }
-    int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
-    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                           // 最小间隔1分钟
-      delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS;
     }
     vTaskDelay(delayTime);
   }
