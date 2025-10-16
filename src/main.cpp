@@ -113,6 +113,7 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
  * @param     reverse: 每次鸣叫的间隔时间，单位毫秒
  */
 void buzzer(uint8_t times, int duration, int interval) {
+  if (times == 1) interval = 0; // 如果只鸣叫一次则不间隔
   for (int i = 0; i < times; i++) {
     digitalWrite(BUZZER_PIN, HIGH);
     vTaskDelay(duration / portTICK_PERIOD_MS);
@@ -182,6 +183,18 @@ void esp_now_connect() {
   Serial.println("ESP NOW 初始化成功");
 #endif
   digitalWrite(RGB_LED_PIN, HIGH);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  digitalWrite(RGB_LED_PIN, LOW);
+  vTaskDelay(500 / portTICK_PERIOD_MS);
+
+  digitalWrite(RGB_LED_PIN, HIGH);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  digitalWrite(RGB_LED_PIN, LOW);
+  vTaskDelay(500 / portTICK_PERIOD_MS);
+
+  digitalWrite(RGB_LED_PIN, HIGH);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  digitalWrite(RGB_LED_PIN, LOW);
 }
 
 // 功能按键回调函数
@@ -199,8 +212,6 @@ void functionButton() {
 void batteryCheck(void* pvParameter) {
   while (1) {
     battery.readMilliVolts(BATTERY_READING_AVERAGE);
-// batvolts        = battery._voltage;
-// voltsPercentage = battery._voltsPercentage;
 #if DEBUG
     Serial.print("电池电压: ");
     Serial.print(battery._voltage);
