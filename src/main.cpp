@@ -16,8 +16,16 @@ uint8_t BoosterAddress[6];
 // 创建ESP NOW通讯实例
 esp_now_peer_info_t peerInfo;
 
-// 接收的数据
+// 声明一个枚举类型的变量，与接收端对应
+enum BoosterState {
+  HAND_MODE,
+  FOOT_MODE,
+  CRUISE_MODE,
+  STANDBY_MODE
+};
+// 声明一个结构体，用来接收数据
 struct Booster {
+  BoosterState mode;
 };
 Booster booster;
 
