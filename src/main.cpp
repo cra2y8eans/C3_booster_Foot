@@ -23,6 +23,7 @@ enum BoosterState {
   CRUISE_MODE,
   STANDBY_MODE
 };
+
 // 声明一个结构体，用来接收数据
 struct Booster {
   BoosterState mode;
