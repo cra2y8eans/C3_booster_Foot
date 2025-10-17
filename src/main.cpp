@@ -162,26 +162,42 @@ void esp_now_connect() {
   esp_now_add_peer(&peerInfo);                   // 添加通信对象
 
   // 如果初始化失败则重连
-  while (esp_now_init() != ESP_OK) {
+  if (esp_now_init() != ESP_OK) {
 #if DEBUG
     Serial.println("ESP NOW 初始化失败，正在重连...");
 #endif
     // 报警
-    buzzer(2, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-    // 重连
-    esp_now_init();                                // 初始化ESP NOW
-    esp_now_register_send_cb(OnDataSent);          // 注册发送成功的回调函数
-    esp_now_register_recv_cb(OnDataRecv);          // 注册接受数据后的回调函数
-    memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
-    peerInfo.channel = 1;                          // 设置通信频道
-    esp_now_add_peer(&peerInfo);                   // 添加通信对象
-
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    // 尝试重连3次
+    bool reconnect_3_times = false;
+    while (!reconnect_3_times) {
+      for (int i = 0; i < 3; i++) {
+        buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+// 重连
+#if DEBUG
+        Serial.printf("重连第 %d 次...\n", i + 1);
+#endif
+        esp_now_init();                                // 初始化ESP NOW
+        esp_now_register_send_cb(OnDataSent);          // 注册发送成功的回调函数
+        esp_now_register_recv_cb(OnDataRecv);          // 注册接受数据后的回调函数
+        memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
+        peerInfo.channel = 1;                          // 设置通信频道
+        esp_now_add_peer(&peerInfo);                   // 添加通信对象
+        vTaskDelay(5000 / portTICK_PERIOD_MS);         // 延时5秒
+      }
+      // 如果3次重连都失败，则退出循环
+      reconnect_3_times = true;
+      esp_now_connected = false;
+#if DEBUG
+      Serial.println("ESP NOW 重连失败");
+#endif
+    }
   }
 // 初始化成功
 #if DEBUG
   Serial.println("ESP NOW 初始化成功");
 #endif
+
   digitalWrite(RGB_LED_PIN, HIGH);
   vTaskDelay(1000 / portTICK_PERIOD_MS);
   digitalWrite(RGB_LED_PIN, LOW);
