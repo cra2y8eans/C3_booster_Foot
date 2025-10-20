@@ -7,7 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
@@ -67,7 +67,7 @@ OneButton function;
 
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
 
-#define RGB_LED_PIN 2
+#define RGB_LED_PIN 7
 #define LONG_BLINK_DURATION 1000
 #define SHORT_BLINK_DURATION 200
 #define LONG_BLINK_INTERVAL 300
@@ -185,32 +185,30 @@ void esp_now_connect() {
         esp_now_add_peer(&peerInfo);                   // 添加通信对象
         vTaskDelay(5000 / portTICK_PERIOD_MS);         // 延时5秒
       }
-      // 如果3次重连都失败，则退出循环
-      reconnect_3_times = true;
+      reconnect_3_times = true; // 如果3次重连都失败，则退出循环
       esp_now_connected = false;
 #if DEBUG
       Serial.println("ESP NOW 重连失败");
 #endif
     }
-  }
-// 初始化成功
+  } else {
 #if DEBUG
-  Serial.println("ESP NOW 初始化成功");
+    Serial.println("ESP NOW 初始化成功");
 #endif
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
 
-  digitalWrite(RGB_LED_PIN, HIGH);
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
-  digitalWrite(RGB_LED_PIN, LOW);
-  vTaskDelay(500 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
 
-  digitalWrite(RGB_LED_PIN, HIGH);
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
-  digitalWrite(RGB_LED_PIN, LOW);
-  vTaskDelay(500 / portTICK_PERIOD_MS);
-
-  digitalWrite(RGB_LED_PIN, HIGH);
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
-  digitalWrite(RGB_LED_PIN, LOW);
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+  }
 }
 
 // 功能按键回调函数
