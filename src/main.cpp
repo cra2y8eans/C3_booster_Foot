@@ -67,7 +67,7 @@ OneButton function;
 
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
 
-#define RGB_LED_PIN 7
+#define RGB_LED_PIN 8
 #define LONG_BLINK_DURATION 1000
 #define SHORT_BLINK_DURATION 200
 #define LONG_BLINK_INTERVAL 300
