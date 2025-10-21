@@ -11,7 +11,7 @@
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
-uint8_t BoosterAddress[6];
+uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // 测试板
 
 // 创建ESP NOW通讯实例
 esp_now_peer_info_t peerInfo;
