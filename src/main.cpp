@@ -95,9 +95,7 @@ BatReading battery;
 void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
   // 如果发送成功
   if (status == ESP_NOW_SEND_SUCCESS) {
-    esp_now_connected = true;
-  } else {
-    esp_now_connected = false;
+    if (!esp_now_connected) esp_now_connected = true;
   }
 }
 
