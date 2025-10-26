@@ -7,7 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
@@ -84,10 +84,16 @@ OneButton function;
 #define R1 10000
 #define R2 9950
 
-
+enum BatteryState {
+  SEVENTY_PLUS,
+  FIFTY_TO_SEVENTY,
+  THIRTY_TO_FIFTY,
+  BELOW_THIRTY
+};
+BatteryState batteryState;
 
 float batvolts, voltsPercentage;
-bool lowBatteryAlerted = false;
+bool  lowBatteryAlerted = false;
 
 BatReading battery;
 
@@ -98,6 +104,10 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
   // 如果发送成功
   if (status == ESP_NOW_SEND_SUCCESS) {
     if (!esp_now_connected) esp_now_connected = true;
+    digitalWrite(RGB_LED_PIN, LOW);
+  } else {
+    esp_now_connected = false;
+    digitalWrite(RGB_LED_PIN, HIGH);
   }
 }
 
@@ -127,19 +137,9 @@ void batteryFirstCheck() {
   // 开机执行一次，提示电池电量
   battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE); // 引脚、R1阻值、R2阻值、最大电压、最小（报警）电压
   battery.readMilliVolts(BATTERY_READING_AVERAGE);
-  // batvolts        = battery._voltage;
-  // voltsPercentage = battery._voltsPercentage;
-  // 根据电量百分比鸣叫
-  if (battery._voltsPercentage < 30) {
-    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-  } else if (battery._voltsPercentage < 60) {
-    buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-  } else if (battery._voltsPercentage < 80) {
-    buzzer(2, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-  } else {
-    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-  }
 #if DEBUG
+  Serial.println("/*****************************/");
+  Serial.println("开机检测函数:");
   Serial.print("电池电压: ");
   Serial.print(battery._voltage);
   Serial.print("V, 电量百分比: ");
@@ -219,23 +219,51 @@ void functionButton() {
 #endif
 }
 
-// 电池电量读取任务
+// 电池电量读取函数
+BatteryState batteryReading() {
+  battery.readMilliVolts(BATTERY_READING_AVERAGE);
+  batvolts        = battery._voltage;
+  voltsPercentage = battery._voltsPercentage;
+#if DEBUG
+  Serial.println("/*****************************/");
+  Serial.println("电池电量读取函数:");
+  Serial.print("电池电压: ");
+  Serial.print(battery._voltage);
+  Serial.print("V, 电量百分比: ");
+  Serial.print(battery._voltsPercentage);
+  Serial.println("%");
+#endif
+  if (voltsPercentage >= 70)
+    return SEVENTY_PLUS;
+  else if (voltsPercentage < 70 && voltsPercentage >= 50)
+    return FIFTY_TO_SEVENTY;
+  else if (voltsPercentage < 50 && voltsPercentage >= 30)
+    return THIRTY_TO_FIFTY;
+  else
+    return BELOW_THIRTY;
+}
+
+// 电量指示和报警
 void batteryCheck(void* pvParameter) {
   while (1) {
-    battery.readMilliVolts(BATTERY_READING_AVERAGE);
-#if DEBUG
-    Serial.print("电池电压: ");
-    Serial.print(battery._voltage);
-    Serial.print("V, 电量百分比: ");
-    Serial.print(battery._voltsPercentage);
-    Serial.println("%");
-#endif
     int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
     if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                           // 最小间隔1分钟
       delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS;
     }
-    // 低电量报警
-    if (battery._voltsPercentage < BATTERY_MIN_PERCENTAGE + 10) {
+    switch (batteryReading()) {
+    case SEVENTY_PLUS:
+      /* code */
+      break;
+    case FIFTY_TO_SEVENTY:
+
+      /* code */
+
+      break;
+    case THIRTY_TO_FIFTY:
+      /* code */
+      break;
+
+    case BELOW_THIRTY:
       if (!lowBatteryAlerted) {
         buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
         lowBatteryAlerted = true;
@@ -249,6 +277,9 @@ void batteryCheck(void* pvParameter) {
       } else {
         lowBatteryAlerted = false;
       }
+      break;
+    default:
+      break;
     }
     vTaskDelay(delayTime);
   }
@@ -267,7 +298,6 @@ void dataTransmit(void* pvParameter) {
     footPad.stepData[1] = digitalRead(STEP_TURN_RIGHT); // 右转
     footPad.stepData[2] = digitalRead(THROTTLE_PIN);    // 电推油门
     footPad.stepSpeed   = analogRead(STEP_SPEED);
-
 #if DEBUG
     if (footPad.stepData[0] == LOW && footPad.stepData[1] == HIGH) {
       Serial.println("左转");
@@ -281,6 +311,11 @@ void dataTransmit(void* pvParameter) {
     }
 #endif
     esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad));
+    if (esp_now_connected) {
+      digitalWrite(RGB_LED_PIN, LOW);
+    } else {
+      digitalWrite(RGB_LED_PIN, HIGH);
+    }
     vTaskDelayUntil(&xLastWakeTime, xPeriod);
   }
 }
