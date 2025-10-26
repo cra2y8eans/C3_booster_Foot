@@ -1,5 +1,6 @@
 #include "OneButton.h"
 #include "batteryReading.hpp"
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -65,13 +66,24 @@ OneButton function;
 #define LONG_BEEP_INTERVAL 300
 #define SHORT_BEEP_INTERVAL 100
 
-/*----------------------------------------------- RGB LED-----------------------------------------------*/
+/*----------------------------------------------- WS2812 -----------------------------------------------*/
 
-#define RGB_LED_PIN 8
-#define LONG_BLINK_DURATION 1000
-#define SHORT_BLINK_DURATION 200
-#define LONG_BLINK_INTERVAL 300
-#define SHORT_BLINK_INTERVAL 100
+#define WS2812_PIN 8
+#define MAX_BRIGHTNESS 255
+#define MIN_BRIGHTNESS 0
+#define STANDARD_BRIGHTNESS 100
+#define SHORT_FLASH_DURATION 200
+#define SHORT_FLASH_INTERVAL 200
+#define LONG_FLASH_DURATION 500
+#define LONG_FLASH_INTERVAL 500
+
+uint16_t brightness; // 动态亮度
+
+Adafruit_NeoPixel myRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
+uint32_t          red    = myRGB.Color(255, 0, 0);  // 红色
+uint32_t          green  = myRGB.Color(0, 255, 0);  // 绿色
+uint32_t          blue   = myRGB.Color(0, 0, 255);  // 蓝色
+uint32_t          yellow = myRGB.Color(255, 80, 0); // 黄色
 
 /*----------------------------------------------- 电池电量 -----------------------------------------------*/
 
@@ -102,6 +114,7 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
 // 收到消息后的回调
 void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
   memcpy(&booster, incomingData, sizeof(booster));
+  if (!esp_now_connected) esp_now_connected = true;
 }
 
 /**  蜂鸣器
@@ -150,30 +163,46 @@ void batteryFirstCheck() {
 void esp_now_connect() {
   WiFi.mode(WIFI_STA); // 设置wifi为STA模式
   WiFi.begin();
-  esp_now_init();                       // 初始化ESP NOW
-  esp_now_register_send_cb(OnDataSent); // 注册发送成功的回调函数
-  esp_now_register_recv_cb(OnDataRecv); // 注册接受数据后的回调函数
-
-  // 注册通信频道
-  memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
-  peerInfo.channel = 1;                          // 设置通信频道
-  esp_now_add_peer(&peerInfo);                   // 添加通信对象
-
-  // 如果初始化失败则重连
-  if (esp_now_init() != ESP_OK) {
+  if (esp_now_init() == ESP_OK) {
+    // 初始化成功
+    esp_now_register_send_cb(OnDataSent); // 注册发送成功的回调函数
+    esp_now_register_recv_cb(OnDataRecv); // 注册接受数据后的回调函数
+    // 注册通信频道
+    memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
+    peerInfo.channel = 1;                          // 设置通信频道
+    esp_now_add_peer(&peerInfo);                   // 添加通信对象
+    // 指示灯提示
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    myRGB.clear();
+    myRGB.setPixelColor(0, green);
+    myRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    myRGB.clear();
+    myRGB.setPixelColor(0, blue);
+    myRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    myRGB.clear();
 #if DEBUG
-    Serial.println("ESP NOW 初始化失败，正在重连...");
+    Serial.println("esp now初始化函数：ESP NOW 初始化成功");
+#endif
+  } else {
+#if DEBUG
+    Serial.println("esp now初始化函数：ESP NOW 初始化失败，正在重试...");
 #endif
     // 报警
-    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-    // 尝试重连3次
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
+    // 尝试重试3次
     bool reconnect_3_times = false;
     while (!reconnect_3_times) {
       for (int i = 0; i < 3; i++) {
         buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-// 重连
 #if DEBUG
-        Serial.printf("重连第 %d 次...\n", i + 1);
+        Serial.printf("esp now初始化函数：重试第 %d 次...\n", i + 1);
 #endif
         esp_now_init();                                // 初始化ESP NOW
         esp_now_register_send_cb(OnDataSent);          // 注册发送成功的回调函数
@@ -183,29 +212,13 @@ void esp_now_connect() {
         esp_now_add_peer(&peerInfo);                   // 添加通信对象
         vTaskDelay(5000 / portTICK_PERIOD_MS);         // 延时5秒
       }
-      reconnect_3_times = true; // 如果3次重连都失败，则退出循环
+      // 如果3次重试都失败，则退出循环
+      reconnect_3_times = true;
       esp_now_connected = false;
 #if DEBUG
-      Serial.println("ESP NOW 重连失败");
+      Serial.println("esp now初始化函数：ESP NOW 重试失败");
 #endif
     }
-  } else {
-#if DEBUG
-    Serial.println("ESP NOW 初始化成功");
-#endif
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
   }
 }
 
@@ -290,7 +303,7 @@ void dataTransmit(void* pvParameter) {
 void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(RGB_LED_PIN, OUTPUT);
+  pinMode(WS2812_PIN, OUTPUT);
 
   pinMode(STEP_TURN_LEFT, INPUT_PULLUP);
   pinMode(STEP_TURN_RIGHT, INPUT_PULLUP);
@@ -300,7 +313,7 @@ void setup() {
   analogReadResolution(12);
 
   esp_now_connect();
-  batteryFirstCheck();
+  // batteryFirstCheck();
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
