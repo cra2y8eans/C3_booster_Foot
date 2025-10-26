@@ -84,7 +84,9 @@ OneButton function;
 #define R1 10000
 #define R2 9950
 
-// float batvolts, voltsPercentage;
+
+
+float batvolts, voltsPercentage;
 bool lowBatteryAlerted = false;
 
 BatReading battery;
@@ -150,17 +152,31 @@ void batteryFirstCheck() {
 void esp_now_connect() {
   WiFi.mode(WIFI_STA); // 设置wifi为STA模式
   WiFi.begin();
-  esp_now_init();                       // 初始化ESP NOW
-  esp_now_register_send_cb(OnDataSent); // 注册发送成功的回调函数
-  esp_now_register_recv_cb(OnDataRecv); // 注册接受数据后的回调函数
+  if (esp_now_init() == ESP_OK) {
+    esp_now_register_send_cb(OnDataSent); // 注册发送成功的回调函数
+    esp_now_register_recv_cb(OnDataRecv); // 注册接受数据后的回调函数
+    // 注册通信频道
+    memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
+    peerInfo.channel = 1;                          // 设置通信频道
+    esp_now_add_peer(&peerInfo);                   // 添加通信对象
+#if DEBUG
+    Serial.println("ESP NOW 初始化成功");
+#endif
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
 
-  // 注册通信频道
-  memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
-  peerInfo.channel = 1;                          // 设置通信频道
-  esp_now_add_peer(&peerInfo);                   // 添加通信对象
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
 
-  // 如果初始化失败则重连
-  if (esp_now_init() != ESP_OK) {
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+  } else {
+// 如果初始化失败则重连
 #if DEBUG
     Serial.println("ESP NOW 初始化失败，正在重连...");
 #endif
@@ -184,28 +200,11 @@ void esp_now_connect() {
         vTaskDelay(5000 / portTICK_PERIOD_MS);         // 延时5秒
       }
       reconnect_3_times = true; // 如果3次重连都失败，则退出循环
-      esp_now_connected = false;
+      digitalWrite(RGB_LED_PIN, HIGH);
 #if DEBUG
       Serial.println("ESP NOW 重连失败");
 #endif
     }
-  } else {
-#if DEBUG
-    Serial.println("ESP NOW 初始化成功");
-#endif
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
   }
 }
 
