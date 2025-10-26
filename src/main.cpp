@@ -84,20 +84,13 @@ OneButton function;
 #define R1 10000
 #define R2 9950
 
-enum BatteryState {
-  SEVENTY_PLUS,     // 70%以上
-  FIFTY_TO_SEVENTY, // 50%-70%
-  THIRTY_TO_FIFTY,  // 30%-50%
-  BATTERY_LOW       // 30%以下
-};
-BatteryState batteryState;
-BatReading   battery;
+// float batvolts, voltsPercentage;
+bool lowBatteryAlerted = false;
 
-float batvolts, voltsPercentage;
-
-bool lowBatteryAlerted = false; // 低电量告警标志位
+BatReading battery;
 
 /*----------------------------------------------- 自定义函数 -----------------------------------------------*/
+
 // 数据发出去之后的回调函数
 void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
   // 如果发送成功
@@ -157,36 +150,23 @@ void batteryFirstCheck() {
 void esp_now_connect() {
   WiFi.mode(WIFI_STA); // 设置wifi为STA模式
   WiFi.begin();
-  if (esp_now_init() == ESP_OK) {
-    esp_now_register_send_cb(OnDataSent); // 注册发送成功的回调函数
-    esp_now_register_recv_cb(OnDataRecv); // 注册接受数据后的回调函数
-    // 注册通信频道
-    memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
-    peerInfo.channel = 1;                          // 设置通信频道
-    esp_now_add_peer(&peerInfo);                   // 添加通信对象
-#if DEBUG
-    Serial.println("esp now初始化函数：ESP NOW 初始化成功");
-#endif
-    // 指示灯提示
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+  esp_now_init();                       // 初始化ESP NOW
+  esp_now_register_send_cb(OnDataSent); // 注册发送成功的回调函数
+  esp_now_register_recv_cb(OnDataRecv); // 注册接受数据后的回调函数
 
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+  // 注册通信频道
+  memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
+  peerInfo.channel = 1;                          // 设置通信频道
+  esp_now_add_peer(&peerInfo);                   // 添加通信对象
 
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-  } else {
-    // 如果初始化失败则重连
+  // 如果初始化失败则重连
+  if (esp_now_init() != ESP_OK) {
 #if DEBUG
-    Serial.println("esp now初始化函数：ESP NOW 初始化失败，正在重试...");
+    Serial.println("ESP NOW 初始化失败，正在重连...");
 #endif
-    digitalWrite(RGB_LED_PIN, LOW);
+    // 报警
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    // 尝试重连3次
     bool reconnect_3_times = false;
     while (!reconnect_3_times) {
       for (int i = 0; i < 3; i++) {
@@ -209,6 +189,23 @@ void esp_now_connect() {
       Serial.println("ESP NOW 重连失败");
 #endif
     }
+  } else {
+#if DEBUG
+    Serial.println("ESP NOW 初始化成功");
+#endif
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    digitalWrite(RGB_LED_PIN, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(RGB_LED_PIN, HIGH);
   }
 }
 
@@ -223,58 +220,38 @@ void functionButton() {
 #endif
 }
 
-// 电量读取
-BatteryState batteryReading() {
-  battery.readMilliVolts(BATTERY_READING_AVERAGE);
-  voltsPercentage = battery._voltsPercentage;
-  batvolts        = battery._voltage;
-  if (voltsPercentage >= 70)
-    return SEVENTY_PLUS;
-  else if (voltsPercentage >= 50)
-    return FIFTY_TO_SEVENTY;
-  else if (voltsPercentage >= 30)
-    return THIRTY_TO_FIFTY;
-  else
-    return BATTERY_LOW;
-#if DEBUG
-  Serial.print("电池电压: ");
-  Serial.print(battery._voltage);
-  Serial.print("V, 电量百分比: ");
-  Serial.print(battery._voltsPercentage);
-  Serial.println("%");
-#endif
-}
-
-// 电池电量提示与报警
+// 电池电量读取任务
 void batteryCheck(void* pvParameter) {
   while (1) {
-    int delayTime = BATTERY_READING_INTERVAL * voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
-    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                  // 最小间隔1分钟
+    battery.readMilliVolts(BATTERY_READING_AVERAGE);
+#if DEBUG
+    Serial.print("电池电压: ");
+    Serial.print(battery._voltage);
+    Serial.print("V, 电量百分比: ");
+    Serial.print(battery._voltsPercentage);
+    Serial.println("%");
+#endif
+    int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
+    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                           // 最小间隔1分钟
       delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS;
     }
-    switch (batteryReading()) {
-    case SEVENTY_PLUS:
-      break;
-    case FIFTY_TO_SEVENTY:
-      /* code */
-      break;
-
-    case THIRTY_TO_FIFTY:
-      /* code */
-      break;
-
-    case BATTERY_LOW:
-      if (!lowBatteryAlerted) {  //
+    // 低电量报警
+    if (battery._voltsPercentage < BATTERY_MIN_PERCENTAGE + 10) {
+      if (!lowBatteryAlerted) {
         buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
         lowBatteryAlerted = true;
+#if DEBUG
+        Serial.print("!!! 低电量报警 !!! 电量: ");
+        Serial.print(battery._voltsPercentage);
+        Serial.println("%");
+        Serial.println("/*****************************/");
+        Serial.printf("下一次检测将在 %d 分钟后\n", delayTime * battery._voltsPercentage / 100 / 60000);
+#endif
       } else {
         lowBatteryAlerted = false;
       }
-      vTaskDelay(delayTime);
-      break;
-    default:
-      break;
     }
+    vTaskDelay(delayTime);
   }
 }
 
@@ -323,7 +300,7 @@ void setup() {
   analogReadResolution(12);
 
   esp_now_connect();
-  // batteryFirstCheck();
+  batteryFirstCheck();
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
