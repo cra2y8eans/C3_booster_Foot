@@ -11,7 +11,8 @@
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
-uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // 测试板
+// uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // 测试板
+uint8_t BoosterAddress[] = { 0x24, 0x58, 0x7c, 0x91, 0xdf, 0x44 }; // super mini 排针
 
 // 创建ESP NOW通讯实例
 esp_now_peer_info_t peerInfo;
@@ -343,4 +344,5 @@ void setup() {
 }
 void loop() {
   esp_now_connected == true ? Serial.println("连接正常") : Serial.println("连接断开");
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
