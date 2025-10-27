@@ -7,7 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
@@ -104,10 +104,8 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
   // 如果发送成功
   if (status == ESP_NOW_SEND_SUCCESS) {
     if (!esp_now_connected) esp_now_connected = true;
-    digitalWrite(RGB_LED_PIN, LOW);
   } else {
     esp_now_connected = false;
-    digitalWrite(RGB_LED_PIN, HIGH);
   }
 }
 
@@ -344,4 +342,5 @@ void setup() {
 #endif
 }
 void loop() {
+  esp_now_connected == true ? Serial.println("连接正常") : Serial.println("连接断开");
 }
