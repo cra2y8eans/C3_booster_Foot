@@ -199,6 +199,7 @@ void esp_now_connect() {
         vTaskDelay(5000 / portTICK_PERIOD_MS);         // 延时5秒
       }
       reconnect_3_times = true; // 如果3次重连都失败，则退出循环
+      esp_now_connected = false;
       digitalWrite(RGB_LED_PIN, HIGH);
 #if DEBUG
       Serial.println("ESP NOW 重连失败");
