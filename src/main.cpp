@@ -1,12 +1,12 @@
 #include "OneButton.h"
 #include "batteryReading.hpp"
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_now.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <Adafruit_NeoPixel.h>
 
 #define DEBUG 1
 
@@ -66,13 +66,24 @@ OneButton function;
 #define LONG_BEEP_INTERVAL 300
 #define SHORT_BEEP_INTERVAL 100
 
-/*----------------------------------------------- RGB LED-----------------------------------------------*/
+/*----------------------------------------------- WS2812 -----------------------------------------------*/
 
-#define RGB_LED_PIN 8
-#define LONG_BLINK_DURATION 1000
-#define SHORT_BLINK_DURATION 200
-#define LONG_BLINK_INTERVAL 300
-#define SHORT_BLINK_INTERVAL 100
+#define WS2812_PIN 8
+#define MAX_BRIGHTNESS 255
+#define MIN_BRIGHTNESS 0
+#define STANDARD_BRIGHTNESS 100
+#define SHORT_FLASH_DURATION 200
+#define SHORT_FLASH_INTERVAL 200
+#define LONG_FLASH_DURATION 500
+#define LONG_FLASH_INTERVAL 500
+
+uint16_t brightness; // 动态亮度
+
+Adafruit_NeoPixel myRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
+uint32_t          red    = myRGB.Color(255, 0, 0);  // 红色
+uint32_t          green  = myRGB.Color(0, 255, 0);  // 绿色
+uint32_t          blue   = myRGB.Color(0, 0, 255);  // 蓝色
+uint32_t          yellow = myRGB.Color(255, 80, 0); // 黄色
 
 /*----------------------------------------------- 电池电量 -----------------------------------------------*/
 
@@ -101,10 +112,9 @@ bool lowBatteryAlerted = false; // 低电量告警标志位
 /*----------------------------------------------- 自定义函数 -----------------------------------------------*/
 // 数据发出去之后的回调函数
 void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
-  // 如果发送成功
-  if (status == ESP_NOW_SEND_SUCCESS) {
-    if (!esp_now_connected) esp_now_connected = true;
-  }
+#if DEBUG
+  status == ESP_NOW_SEND_SUCCESS ? Serial.println("数据发送回调函数：数据发送成功") : Serial.println("数据发送回调函数：数据发送失败");
+#endif
 }
 
 // 收到消息后的回调
@@ -133,18 +143,6 @@ void batteryFirstCheck() {
   // 开机执行一次，提示电池电量
   battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE); // 引脚、R1阻值、R2阻值、最大电压、最小（报警）电压
   battery.readMilliVolts(BATTERY_READING_AVERAGE);
-  // batvolts        = battery._voltage;
-  // voltsPercentage = battery._voltsPercentage;
-  // 根据电量百分比鸣叫
-  if (battery._voltsPercentage < 30) {
-    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-  } else if (battery._voltsPercentage < 60) {
-    buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-  } else if (battery._voltsPercentage < 80) {
-    buzzer(2, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-  } else {
-    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-  }
 #if DEBUG
   Serial.print("电池电压: ");
   Serial.print(battery._voltage);
@@ -169,25 +167,25 @@ void esp_now_connect() {
     Serial.println("esp now初始化函数：ESP NOW 初始化成功");
 #endif
     // 指示灯提示
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
     vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
+    myRGB.clear();
+    myRGB.setPixelColor(0, green);
+    myRGB.show();
     vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
+    myRGB.clear();
+    myRGB.setPixelColor(0, blue);
+    myRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    myRGB.clear();
   } else {
-    // 如果初始化失败则重连
-#if DEBUG
-    Serial.println("esp now初始化函数：ESP NOW 初始化失败，正在重试...");
-#endif
-    digitalWrite(RGB_LED_PIN, LOW);
+    // 报警
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
+    // 尝试重试3次
     bool reconnect_3_times = false;
     while (!reconnect_3_times) {
       for (int i = 0; i < 3; i++) {
@@ -255,17 +253,17 @@ void batteryCheck(void* pvParameter) {
     }
     switch (batteryReading()) {
     case SEVENTY_PLUS:
+      myRGB.setPixelColor(0, blue);
       break;
     case FIFTY_TO_SEVENTY:
-      /* code */
+      myRGB.setPixelColor(0, green);
       break;
-
     case THIRTY_TO_FIFTY:
-      /* code */
+      myRGB.setPixelColor(0, yellow);
       break;
-
     case BATTERY_LOW:
-      if (!lowBatteryAlerted) {  //
+      myRGB.setPixelColor(0, red);
+      if (!lowBatteryAlerted) {
         buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
         lowBatteryAlerted = true;
       } else {
@@ -276,6 +274,7 @@ void batteryCheck(void* pvParameter) {
     default:
       break;
     }
+    myRGB.show();
   }
 }
 
@@ -314,7 +313,7 @@ void dataTransmit(void* pvParameter) {
 void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(RGB_LED_PIN, OUTPUT);
+  pinMode(WS2812_PIN, OUTPUT);
 
   pinMode(STEP_TURN_LEFT, INPUT_PULLUP);
   pinMode(STEP_TURN_RIGHT, INPUT_PULLUP);
@@ -324,7 +323,7 @@ void setup() {
   analogReadResolution(12);
 
   esp_now_connect();
-  // batteryFirstCheck();
+  batteryFirstCheck();
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
