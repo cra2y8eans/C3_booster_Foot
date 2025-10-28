@@ -131,22 +131,6 @@ void buzzer(uint8_t times, int duration, int interval) {
   }
 }
 
-// 电量开机初检
-void batteryFirstCheck() {
-  // 开机执行一次，提示电池电量
-  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE); // 引脚、R1阻值、R2阻值、最大电压、最小（报警）电压
-  battery.readMilliVolts(BATTERY_READING_AVERAGE);
-#if DEBUG
-  Serial.println("/*****************************/");
-  Serial.println("开机检测函数:");
-  Serial.print("电池电压: ");
-  Serial.print(battery._voltage);
-  Serial.print("V, 电量百分比: ");
-  Serial.print(battery._voltsPercentage);
-  Serial.println("%");
-#endif
-}
-
 // ESP NOW
 void esp_now_connect() {
   WiFi.mode(WIFI_STA); // 设置wifi为STA模式
@@ -219,7 +203,10 @@ void functionButton() {
 #endif
 }
 
-// 电池电量读取函数
+/**  电量读取
+ * @brief     读取电量，更新电压、电量两变量，并返回电量状态
+ * @return    BatteryState: 电量状态枚举
+ */
 BatteryState batteryReading() {
   battery.readMilliVolts(BATTERY_READING_AVERAGE);
   batvolts        = battery._voltage;
@@ -246,26 +233,28 @@ BatteryState batteryReading() {
 // 电量指示和报警
 void batteryCheck(void* pvParameter) {
   while (1) {
-    int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
-    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                           // 最小间隔1分钟
-      delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS;
-    }
-    switch (batteryReading()) {
+    BatteryState state = batteryReading();
+    // 根据电量百分比调整检测频率，电量越低检测越频繁
+    int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS;
+    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS; // 最小间隔1分钟
+
+    switch (state) {
     case SEVENTY_PLUS:
       /* code */
       break;
+
     case FIFTY_TO_SEVENTY:
-
       /* code */
-
       break;
+
     case THIRTY_TO_FIFTY:
       /* code */
       break;
 
     case BELOW_THIRTY:
+      /* code */
       if (!lowBatteryAlerted) {
-        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+        buzzer(5, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
         lowBatteryAlerted = true;
 #if DEBUG
         Serial.print("!!! 低电量报警 !!! 电量: ");
@@ -281,6 +270,7 @@ void batteryCheck(void* pvParameter) {
     default:
       break;
     }
+
     vTaskDelay(delayTime);
   }
 }
@@ -334,7 +324,6 @@ void setup() {
   analogReadResolution(12);
 
   esp_now_connect();
-  batteryFirstCheck();
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
