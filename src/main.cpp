@@ -42,25 +42,25 @@ bool esp_now_connected;
 
 /*----------------------------------------- MPU6050 & QMC5883P -----------------------------------------*/
 
-#define SDA_PIN 19
-#define SCL_PIN 18
+#define SDA_PIN 21
+#define SCL_PIN 22
 
 // float yaw, gyro_Z; // Z轴角度，Z轴角速度
 // MPU6050 mpu6050(Wire);
 
 /*----------------------------------------------- 操控 -----------------------------------------------*/
 
-#define STEP_TURN_LEFT 5
-#define STEP_TURN_RIGHT 0
-#define THROTTLE_PIN 6
-#define FUNCTION_PIN 7
-#define STEP_SPEED 1
+#define STEP_TURN_LEFT 19
+#define STEP_TURN_RIGHT 32
+#define THROTTLE_PIN 25
+#define FUNCTION_PIN 33
+#define STEP_SPEED 36
 
 OneButton function;
 
 /*---------------------------------------------- 蜂鸣器 ----------------------------------------------*/
 
-#define BUZZER_PIN 10
+#define BUZZER_PIN 18
 #define LONG_BEEP_DURATION 1000
 #define SHORT_BEEP_DURATION 200
 #define LONG_BEEP_INTERVAL 300
@@ -68,7 +68,7 @@ OneButton function;
 
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
 
-#define RGB_LED_PIN 8
+#define RGB_LED_PIN 12
 #define LONG_BLINK_DURATION 1000
 #define SHORT_BLINK_DURATION 200
 #define LONG_BLINK_INTERVAL 300
@@ -76,7 +76,7 @@ OneButton function;
 
 /*----------------------------------------------- 电池电量 -----------------------------------------------*/
 
-#define BATTERY_PIN 4
+#define BATTERY_PIN 39
 #define BATTERY_MAX_VALUE 4.2                  // 电池最大电量
 #define BATTERY_MIN_VALUE 3.2                  // 电池最小电量
 #define BATTERY_MIN_PERCENTAGE 20              // 电池最低百分比
