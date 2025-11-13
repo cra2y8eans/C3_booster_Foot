@@ -107,8 +107,8 @@ uint32_t          yellow = myRGB.Color(255, 40, 0); // 黄色
 #define BATTERY_MIN_PERCENTAGE 20              // 电池最低百分比
 #define BATTERY_READING_AVERAGE 50             // 采样次数
 #define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 5分钟*60秒*1000毫秒
-#define R1 10000
-#define R2 9950
+#define R1 9990
+#define R2 9980
 
 enum BatteryState {
   SEVENTY_PLUS,
