@@ -1,5 +1,9 @@
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
 #include "OneButton.h"
+#include "Wire.h"
 #include "batteryReading.hpp"
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -45,6 +49,7 @@ bool esp_now_connected;
 #define SDA_PIN 21
 #define SCL_PIN 22
 
+MPU6050 mpu;
 // float yaw, gyro_Z; // Z轴角度，Z轴角速度
 // MPU6050 mpu6050(Wire);
 
@@ -66,6 +71,25 @@ OneButton function;
 #define LONG_BEEP_INTERVAL 300
 #define SHORT_BEEP_INTERVAL 100
 
+/*----------------------------------------------- WS2812 -----------------------------------------------*/
+
+#define WS2812_PIN 17
+#define MAX_BRIGHTNESS 255
+#define MIN_BRIGHTNESS 0
+#define STANDARD_BRIGHTNESS 100
+#define SHORT_FLASH_DURATION 200
+#define SHORT_FLASH_INTERVAL 200
+#define LONG_FLASH_DURATION 500
+#define LONG_FLASH_INTERVAL 500
+
+uint16_t brightness; // 动态亮度
+
+Adafruit_NeoPixel myRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
+uint32_t          red    = myRGB.Color(255, 0, 0);  // 红色
+uint32_t          green  = myRGB.Color(0, 255, 0);  // 绿色
+uint32_t          blue   = myRGB.Color(0, 0, 255);  // 蓝色
+uint32_t          yellow = myRGB.Color(255, 40, 0); // 黄色
+
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
 
 #define RGB_LED_PIN 12
@@ -77,6 +101,7 @@ OneButton function;
 /*----------------------------------------------- 电池电量 -----------------------------------------------*/
 
 #define BATTERY_PIN 39
+#define USB_PIN 34
 #define BATTERY_MAX_VALUE 4.2                  // 电池最大电量
 #define BATTERY_MIN_VALUE 3.2                  // 电池最小电量
 #define BATTERY_MIN_PERCENTAGE 20              // 电池最低百分比
@@ -93,8 +118,9 @@ enum BatteryState {
 };
 BatteryState batteryState;
 
-float batvolts, voltsPercentage;
-bool  lowBatteryAlerted = false;
+float         batvolts, voltsPercentage;
+bool          lowBatteryAlerted = false;
+volatile bool usbConnected      = false;
 
 BatReading battery;
 
@@ -142,22 +168,23 @@ void esp_now_connect() {
     memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
     peerInfo.channel = 1;                          // 设置通信频道
     esp_now_add_peer(&peerInfo);                   // 添加通信对象
+    // 指示灯提示
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    myRGB.clear();
+    myRGB.setPixelColor(0, green);
+    myRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    myRGB.clear();
+    myRGB.setPixelColor(0, blue);
+    myRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    myRGB.clear();
 #if DEBUG
     Serial.println("ESP NOW 初始化成功");
 #endif
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-
-    digitalWrite(RGB_LED_PIN, LOW);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(RGB_LED_PIN, HIGH);
   } else {
 // 如果初始化失败则重连
 #if DEBUG
@@ -241,19 +268,16 @@ void batteryCheck(void* pvParameter) {
 
     switch (state) {
     case SEVENTY_PLUS:
-      /* code */
+      myRGB.setPixelColor(0, blue);
       break;
-
     case FIFTY_TO_SEVENTY:
-      /* code */
+      myRGB.setPixelColor(0, green);
       break;
-
     case THIRTY_TO_FIFTY:
-      /* code */
+      myRGB.setPixelColor(0, yellow);
       break;
-
     case BELOW_THIRTY:
-      /* code */
+      myRGB.setPixelColor(0, red);
       if (!lowBatteryAlerted) {
         buzzer(5, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
         lowBatteryAlerted = true;
@@ -274,6 +298,11 @@ void batteryCheck(void* pvParameter) {
 
     vTaskDelay(delayTime);
   }
+}
+
+// usb状态改变中断处理函数
+void IRAM_ATTR handleUSBInterrupt() {
+  usbConnected = digitalRead(USB_PIN);
 }
 
 // 数据发送任务
@@ -302,42 +331,60 @@ void dataTransmit(void* pvParameter) {
     }
 #endif
     esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad));
-    if (esp_now_connected) {
-      digitalWrite(RGB_LED_PIN, LOW);
+
+    // 连接正常且USB未连接，蓝灯常亮
+    if (esp_now_connected && !usbConnected) {
+      digitalWrite(RGB_LED_PIN, LOW); // 共阳极RBG，低电平点亮
     } else {
       digitalWrite(RGB_LED_PIN, HIGH);
     }
     vTaskDelayUntil(&xLastWakeTime, xPeriod);
   }
 }
+
+// MPU6050任务
+void mpu6050Task(void* pvParameter) {
+  Wire.begin(SDA_PIN, SCL_PIN);
+  mpu.initialize();
+  mpu.setI2CBypassEnabled(false); // 使能直通模式以访问辅助I2C总线上的磁力计
+  TickType_t       xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xPeriod       = pdMS_TO_TICKS(12.5); // 频率 80Hz → 周期为 1/80 = 0.0125 秒 = 12.5 毫秒
+  while (1) {
+    // 巡航模式才读取数据
+    if (booster.mode == CRUISE_MODE) {
+    }
+
+    vTaskDelayUntil(&xLastWakeTime, xPeriod);
+  }
+}
+
 /*-------------------------------------------------------------------------------------------------------------*/
 
 void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(RGB_LED_PIN, OUTPUT);
+  pinMode(WS2812_PIN, OUTPUT);
 
   pinMode(STEP_TURN_LEFT, INPUT_PULLUP);
   pinMode(STEP_TURN_RIGHT, INPUT_PULLUP);
   pinMode(THROTTLE_PIN, INPUT_PULLUP);
   pinMode(FUNCTION_PIN, INPUT_PULLUP);
+  pinMode(USB_PIN, INPUT_PULLDOWN);
 
   analogReadResolution(12);
 
   esp_now_connect();
 
+  attachInterrupt(USB_PIN, handleUSBInterrupt, CHANGE);
+
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
+  // xTaskCreate(mpu6050Task, "mpu6050Task", 1024 * 4, NULL, 1, NULL);
 
 #if DEBUG
   Serial.println("脚控初始化完成");
 #endif
 }
 void loop() {
-// #if DEBUG
-//   esp_now_connected == true ? Serial.println("连接正常") : Serial.println("连接断开");
-//   vTaskDelay(1000 / portTICK_PERIOD_MS);
-// #endif
-//   Serial.printf("步进电机数据: %d %d %d %d\n", footPad.stepData[0], footPad.stepData[1], footPad.stepData[2], footPad.stepSpeed);
-//   vTaskDelay(500 / portTICK_PERIOD_MS);
 }
