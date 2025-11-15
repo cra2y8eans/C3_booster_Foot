@@ -42,7 +42,7 @@ struct FootPad {
 };
 FootPad footPad;
 
-bool esp_now_connected;
+volatile bool esp_now_connected;
 
 /*----------------------------------------- MPU6050 & QMC5883P -----------------------------------------*/
 
@@ -76,7 +76,7 @@ OneButton function;
 #define WS2812_PIN 17
 #define MAX_BRIGHTNESS 255
 #define MIN_BRIGHTNESS 0
-#define STANDARD_BRIGHTNESS 100
+#define STANDARD_BRIGHTNESS 10
 #define SHORT_FLASH_DURATION 200
 #define SHORT_FLASH_INTERVAL 200
 #define LONG_FLASH_DURATION 500
@@ -305,6 +305,19 @@ void IRAM_ATTR handleUSBInterrupt() {
   usbConnected = digitalRead(USB_PIN);
 }
 
+// esp now状态指示灯任务
+void espNowLed(void* pvParameter) {
+  while (1) {
+    // 连接正常且USB未连接，蓝灯常亮
+    if (esp_now_connected == true && usbConnected == false) {
+      digitalWrite(RGB_LED_PIN, LOW); // 共阳极RBG，低电平点亮
+    } else {
+      digitalWrite(RGB_LED_PIN, HIGH);
+    }
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+  }
+}
+
 // 数据发送任务
 void dataTransmit(void* pvParameter) {
   function.setup(FUNCTION_PIN, INPUT_PULLUP);
@@ -331,13 +344,6 @@ void dataTransmit(void* pvParameter) {
     }
 #endif
     esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad));
-
-    // 连接正常且USB未连接，蓝灯常亮
-    if (esp_now_connected && !usbConnected) {
-      digitalWrite(RGB_LED_PIN, LOW); // 共阳极RBG，低电平点亮
-    } else {
-      digitalWrite(RGB_LED_PIN, HIGH);
-    }
     vTaskDelayUntil(&xLastWakeTime, xPeriod);
   }
 }
@@ -373,6 +379,8 @@ void setup() {
   pinMode(USB_PIN, INPUT_PULLDOWN);
 
   analogReadResolution(12);
+  myRGB.begin();
+  myRGB.setBrightness(STANDARD_BRIGHTNESS);
 
   esp_now_connect();
 
@@ -380,6 +388,7 @@ void setup() {
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
+  xTaskCreate(espNowLed, "espNowLed", 1024 * 1, NULL, 1, NULL);
   // xTaskCreate(mpu6050Task, "mpu6050Task", 1024 * 4, NULL, 1, NULL);
 
 #if DEBUG
