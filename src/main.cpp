@@ -42,7 +42,9 @@ struct FootPad {
 };
 FootPad footPad;
 
-volatile bool esp_now_connected;
+volatile bool esp_now_connected, recvSucceed;
+unsigned long lastSendTime = 0;
+#define CONNECTION_TIMEOUT 500
 
 /*----------------------------------------- MPU6050 & QMC5883P -----------------------------------------*/
 
@@ -130,15 +132,14 @@ BatReading battery;
 void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
   // 如果发送成功
   if (status == ESP_NOW_SEND_SUCCESS) {
-    if (!esp_now_connected) esp_now_connected = true;
-  } else {
-    esp_now_connected = false;
+    lastSendTime = millis();
   }
 }
 
 // 收到消息后的回调
 void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
   memcpy(&booster, incomingData, sizeof(booster));
+  if (!recvSucceed) recvSucceed = true;
 }
 
 /**  蜂鸣器
@@ -305,19 +306,6 @@ void IRAM_ATTR handleUSBInterrupt() {
   usbConnected = digitalRead(USB_PIN);
 }
 
-// esp now状态指示灯任务
-void espNowLed(void* pvParameter) {
-  while (1) {
-    // 连接正常且USB未连接，蓝灯常亮
-    if (esp_now_connected == true && usbConnected == false) {
-      digitalWrite(RGB_LED_PIN, LOW); // 共阳极RBG，低电平点亮
-    } else {
-      digitalWrite(RGB_LED_PIN, HIGH);
-    }
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-  }
-}
-
 // 数据发送任务
 void dataTransmit(void* pvParameter) {
   function.setup(FUNCTION_PIN, INPUT_PULLUP);
@@ -348,19 +336,31 @@ void dataTransmit(void* pvParameter) {
   }
 }
 
-// MPU6050任务
-void mpu6050Task(void* pvParameter) {
-  Wire.begin(SDA_PIN, SCL_PIN);
-  mpu.initialize();
-  mpu.setI2CBypassEnabled(false); // 使能直通模式以访问辅助I2C总线上的磁力计
-  TickType_t       xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xPeriod       = pdMS_TO_TICKS(12.5); // 频率 80Hz → 周期为 1/80 = 0.0125 秒 = 12.5 毫秒
+void esp_now_connection(void* pvParameter) {
   while (1) {
-    // 巡航模式才读取数据
-    if (booster.mode == CRUISE_MODE) {
+    unsigned long currentTime = millis();
+    esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);
+#if DEBUG
+    static unsigned long lastDebugTime = 0;
+    if (currentTime - lastDebugTime > 2000) { // 每2秒打印一次，避免刷屏
+      if (esp_now_connected && recvSucceed) {
+        Serial.println("连接检测任务：ESP NOW 接收发送正常！");
+      } else if (esp_now_connected && !recvSucceed) {
+        Serial.println("连接检测任务：ESP NOW 接收成功，但发送异常！");
+      } else if (!esp_now_connected && recvSucceed) {
+        Serial.println("连接检测任务：ESP NOW 接收超时，但发送成功！");
+      } else if (!esp_now_connected && !recvSucceed) {
+        Serial.println("连接检测任务：ESP NOW 彻底断线！");
+      }
+      lastDebugTime = currentTime;
     }
-
-    vTaskDelayUntil(&xLastWakeTime, xPeriod);
+#endif
+    if (esp_now_connected == true && usbConnected == false) {
+      digitalWrite(RGB_LED_PIN, LOW); // 共阳极RBG，低电平点亮
+    } else {
+      digitalWrite(RGB_LED_PIN, HIGH);
+    }
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
@@ -388,8 +388,7 @@ void setup() {
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
-  xTaskCreate(espNowLed, "espNowLed", 1024 * 1, NULL, 1, NULL);
-  // xTaskCreate(mpu6050Task, "mpu6050Task", 1024 * 4, NULL, 1, NULL);
+  xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 1, NULL, 1, NULL);
 
 #if DEBUG
   Serial.println("脚控初始化完成");
