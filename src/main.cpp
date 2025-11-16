@@ -390,6 +390,8 @@ void setup() {
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 1, NULL, 1, NULL);
 
+  footPad.stepData[3] = false; // 功能键初始状态为假
+
 #if DEBUG
   Serial.println("脚控初始化完成");
 #endif
