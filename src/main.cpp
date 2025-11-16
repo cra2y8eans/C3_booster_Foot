@@ -57,8 +57,8 @@ MPU6050 mpu;
 
 /*----------------------------------------------- 操控 -----------------------------------------------*/
 
-#define STEP_TURN_LEFT 19
-#define STEP_TURN_RIGHT 32
+#define STEP_TURN_LEFT 32
+#define STEP_TURN_RIGHT 19
 #define THROTTLE_PIN 25
 #define FUNCTION_PIN 33
 #define STEP_SPEED 36
