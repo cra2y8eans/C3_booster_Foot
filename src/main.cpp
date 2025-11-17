@@ -310,7 +310,7 @@ void IRAM_ATTR handleUSBInterrupt() {
 void dataTransmit(void* pvParameter) {
   function.setup(FUNCTION_PIN, INPUT_PULLUP);
   function.attachLongPressStart(functionButton);
-  function.setPressMs(600);
+  function.setPressMs(800);
   TickType_t       xLastWakeTime = xTaskGetTickCount();
   const TickType_t xPeriod       = pdMS_TO_TICKS(12.5); // 频率 80Hz → 周期为 1/80 = 0.0125 秒 = 12.5 毫秒
   while (1) {
@@ -383,6 +383,7 @@ void setup() {
   myRGB.setBrightness(STANDARD_BRIGHTNESS);
 
   esp_now_connect();
+  footPad.stepData[3] = false; // 功能键初始状态为假
 
   attachInterrupt(USB_PIN, handleUSBInterrupt, CHANGE);
 
@@ -390,7 +391,6 @@ void setup() {
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 1, NULL, 1, NULL);
 
-  footPad.stepData[3] = false; // 功能键初始状态为假
 
 #if DEBUG
   Serial.println("脚控初始化完成");
