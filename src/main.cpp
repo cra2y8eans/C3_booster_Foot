@@ -63,15 +63,16 @@ MPU6050 mpu;
 #define FUNCTION_PIN 33
 #define STEP_SPEED 36
 
-OneButton function;
+OneButton functionButton;
+// OneButton batteryButton;
 
 /*---------------------------------------------- 蜂鸣器 ----------------------------------------------*/
 
 #define BUZZER_PIN 18
-#define LONG_BEEP_DURATION 1000
-#define SHORT_BEEP_DURATION 200
-#define LONG_BEEP_INTERVAL 300
-#define SHORT_BEEP_INTERVAL 100
+#define LONG_BEEP_DURATION 1000 // 长鸣时间
+#define SHORT_BEEP_DURATION 200 // 短鸣时间
+#define LONG_BEEP_INTERVAL 300  // 长鸣间隔时间
+#define SHORT_BEEP_INTERVAL 100 // 短鸣间隔时间
 
 /*----------------------------------------------- WS2812 -----------------------------------------------*/
 
@@ -83,6 +84,7 @@ OneButton function;
 #define SHORT_FLASH_INTERVAL 200
 #define LONG_FLASH_DURATION 500
 #define LONG_FLASH_INTERVAL 500
+#define FLASH_INTERVAL 30000
 
 uint16_t brightness; // 动态亮度
 
@@ -108,7 +110,7 @@ uint32_t          yellow = myRGB.Color(255, 40, 0); // 黄色
 #define BATTERY_MIN_VALUE 3.2                  // 电池最小电量
 #define BATTERY_MIN_PERCENTAGE 20              // 电池最低百分比
 #define BATTERY_READING_AVERAGE 50             // 采样次数
-#define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 5分钟*60秒*1000毫秒
+#define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 3分钟*60秒*1000毫秒
 #define R1 9990
 #define R2 9980
 
@@ -121,8 +123,9 @@ enum BatteryState {
 BatteryState batteryState;
 
 float         batvolts, voltsPercentage;
-bool          lowBatteryAlerted = false;
-volatile bool usbConnected      = false;
+volatile bool batteryLED   = true;
+volatile bool batteryLow   = false;
+volatile bool usbConnected = false;
 
 BatReading battery;
 
@@ -220,53 +223,60 @@ void esp_now_connect() {
   }
 }
 
-// 功能按键回调函数
-void functionButton() {
+// 功能按键长按回调函数
+void longPressed_callback() {
   footPad.stepData[3] = !footPad.stepData[3];
+  buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+#if DEBUG
+  if (footPad.stepData[3]) {
+    Serial.println("功能键长按");
+  }
+#endif
+}
+
+// 功能按键短按回调函数
+void shortPressed_callback() {
+  batteryLED = true;
   buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
 #if DEBUG
   if (footPad.stepData[3]) {
-    Serial.println("功能键按下");
+    Serial.println("功能键短按");
   }
 #endif
 }
 
 /**  电量读取
  * @brief     读取电量，更新电压、电量两变量，并返回电量状态
+ * @param     batteryLow: 低电量标志位
+ * @param     voltsPercentage: 电量百分比
+ * @param     batvolts: 电压值
  * @return    BatteryState: 电量状态枚举
  */
 BatteryState batteryReading() {
   battery.readMilliVolts(BATTERY_READING_AVERAGE);
   batvolts        = battery._voltage;
   voltsPercentage = battery._voltsPercentage;
-#if DEBUG
-  Serial.println("/*****************************/");
-  Serial.println("电池电量读取函数:");
-  Serial.print("电池电压: ");
-  Serial.print(battery._voltage);
-  Serial.print("V, 电量百分比: ");
-  Serial.print(battery._voltsPercentage);
-  Serial.println("%");
-#endif
-  if (voltsPercentage >= 70)
+  if (voltsPercentage >= 70) {
+    batteryLow = false;
     return SEVENTY_PLUS;
-  else if (voltsPercentage < 70 && voltsPercentage >= 50)
+  } else if (voltsPercentage >= 50) {
+    batteryLow = false;
     return FIFTY_TO_SEVENTY;
-  else if (voltsPercentage < 50 && voltsPercentage >= 30)
+  } else if (voltsPercentage >= 30) {
+    batteryLow = false;
     return THIRTY_TO_FIFTY;
-  else
+  } else {
+    batteryLow = true;
     return BELOW_THIRTY;
+  }
 }
 
-// 电量指示和报警
-void batteryCheck(void* pvParameter) {
-  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
-  while (1) {
-    BatteryState state = batteryReading();
-    // 根据电量百分比调整检测频率，电量越低检测越频繁
-    int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS;
-    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS; // 最小间隔1分钟
-
+/**  电量指示
+ * @brief     用ws2812b不同颜色指示电量状态
+ * @param     batteryLED: 电量指示灯状态标志位
+ */
+void batteryFlash(BatteryState state) {
+  if (batteryLED) {
     switch (state) {
     case SEVENTY_PLUS:
       myRGB.setPixelColor(0, blue);
@@ -277,27 +287,57 @@ void batteryCheck(void* pvParameter) {
     case THIRTY_TO_FIFTY:
       myRGB.setPixelColor(0, yellow);
       break;
-    case BELOW_THIRTY:
-      myRGB.setPixelColor(0, red);
-      if (!lowBatteryAlerted) {
-        buzzer(5, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-        lowBatteryAlerted = true;
-#if DEBUG
-        Serial.print("!!! 低电量报警 !!! 电量: ");
-        Serial.print(battery._voltsPercentage);
-        Serial.println("%");
-        Serial.println("/*****************************/");
-        Serial.printf("下一次检测将在 %d 分钟后\n", delayTime * battery._voltsPercentage / 100 / 60000);
-#endif
-      } else {
-        lowBatteryAlerted = false;
-      }
-      break;
     default:
       break;
     }
+#if DEBUG
+    Serial.println("/*****************************/");
+    Serial.println("电池电量指示函数:");
+    Serial.print("电池电压: ");
+    Serial.print(battery._voltage);
+    Serial.print("V, 电量百分比: ");
+    Serial.print(battery._voltsPercentage);
+    Serial.println("%");
+#endif
+  }
+}
 
-    vTaskDelay(delayTime);
+/**  电量读取指示和报警任务
+ * @brief     电量指示灯管理：上电/按键唤醒显示30秒后自动休眠；
+              低电量报警管理：低于设定阈值后循环报警
+ * @param     R1: 分压电阻R1阻值
+ * @param     R2: 分压电阻R2阻值
+ */
+void batteryCheck(void* pvParameter) {
+  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
+  while (1) {
+    // 未到低电量阈值时采用指示+休眠方式
+    if (!batteryLow) {
+      myRGB.clear();
+      BatteryState  state         = batteryReading(); // 定期进行电量检测，所以不直接把batteryReading函数作为形参传入
+      unsigned long flashOnMillis = millis();
+      if (millis() - flashOnMillis < FLASH_INTERVAL) { // 判断是否唤醒显示
+        batteryFlash(state);
+      } else {
+        myRGB.clear();
+        batteryLED = false;
+      }
+    } else {
+      // 根据电量百分比调整检测频率，电量越低检测越频繁
+      int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS;
+      if (delayTime < 30 * 1000 / portTICK_PERIOD_MS) delayTime = 30 * 1000 / portTICK_PERIOD_MS; // 最小间隔30秒
+      myRGB.setPixelColor(0, red);
+      buzzer(5, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+#if DEBUG
+      Serial.print("!!! 低电量报警 !!! 电量: ");
+      Serial.print(battery._voltsPercentage);
+      Serial.println("%");
+      Serial.println("/*****************************/");
+      Serial.printf("下一次检测将在 %d 分钟后\n", delayTime * battery._voltsPercentage / 100 / 60000);
+#endif
+      vTaskDelay(delayTime);
+    }
+    vTaskDelay(500 / portTICK_PERIOD_MS); // 每次检测后延时0.5秒
   }
 }
 
@@ -308,13 +348,14 @@ void IRAM_ATTR handleUSBInterrupt() {
 
 // 数据发送任务
 void dataTransmit(void* pvParameter) {
-  function.setup(FUNCTION_PIN, INPUT_PULLUP);
-  function.attachLongPressStart(functionButton);
-  function.setPressMs(800);
+  functionButton.setup(FUNCTION_PIN, INPUT_PULLUP);
+  functionButton.attachLongPressStart(longPressed_callback);
+  functionButton.attachClick(shortPressed_callback);
+  functionButton.setPressMs(800);
   TickType_t       xLastWakeTime = xTaskGetTickCount();
   const TickType_t xPeriod       = pdMS_TO_TICKS(12.5); // 频率 80Hz → 周期为 1/80 = 0.0125 秒 = 12.5 毫秒
   while (1) {
-    function.tick();
+    functionButton.tick();
     footPad.stepData[0] = digitalRead(STEP_TURN_LEFT);  // 左转
     footPad.stepData[1] = digitalRead(STEP_TURN_RIGHT); // 右转
     footPad.stepData[2] = digitalRead(THROTTLE_PIN);    // 电推油门
@@ -390,7 +431,6 @@ void setup() {
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 1, NULL, 1, NULL);
-
 
 #if DEBUG
   Serial.println("脚控初始化完成");
