@@ -89,10 +89,11 @@ OneButton functionButton;
 uint16_t brightness; // 动态亮度
 
 Adafruit_NeoPixel myRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
-uint32_t          red    = myRGB.Color(255, 0, 0);  // 红色
-uint32_t          green  = myRGB.Color(0, 255, 0);  // 绿色
-uint32_t          blue   = myRGB.Color(0, 0, 255);  // 蓝色
-uint32_t          yellow = myRGB.Color(255, 40, 0); // 黄色
+uint32_t          red    = myRGB.Color(255, 0, 0);   // 红色
+uint32_t          green  = myRGB.Color(0, 255, 0);   // 绿色
+uint32_t          blue   = myRGB.Color(0, 0, 255);   // 蓝色
+uint32_t          cyan   = myRGB.Color(0, 125, 255); // 青色
+uint32_t          yellow = myRGB.Color(255, 40, 0);  // 黄色
 
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
 
@@ -115,16 +116,16 @@ uint32_t          yellow = myRGB.Color(255, 40, 0); // 黄色
 #define R2 9980
 
 enum BatteryState {
-  SEVENTY_PLUS,
-  FIFTY_TO_SEVENTY,
-  THIRTY_TO_FIFTY,
-  BELOW_THIRTY
+  FULL,     // 100% - 80%
+  DECENT,   // 80%  - 60%
+  MODERATE, // 60%  - 40%
+  DEPLETED, // 40%  - 20%
+  CRITICAL  // 20%  - 0%
 };
 BatteryState batteryState;
 
 float         batvolts, voltsPercentage;
 volatile bool batteryLED   = true;
-volatile bool batteryLow   = false;
 volatile bool usbConnected = false;
 
 BatReading battery;
@@ -247,7 +248,6 @@ void shortPressed_callback() {
 
 /**  电量读取
  * @brief     读取电量，更新电压、电量两变量，并返回电量状态
- * @param     batteryLow: 低电量标志位
  * @param     voltsPercentage: 电量百分比
  * @param     batvolts: 电压值
  * @return    BatteryState: 电量状态枚举
@@ -256,18 +256,16 @@ BatteryState batteryReading() {
   battery.readMilliVolts(BATTERY_READING_AVERAGE);
   batvolts        = battery._voltage;
   voltsPercentage = battery._voltsPercentage;
-  if (voltsPercentage >= 70) {
-    batteryLow = false;
-    return SEVENTY_PLUS;
-  } else if (voltsPercentage >= 50) {
-    batteryLow = false;
-    return FIFTY_TO_SEVENTY;
-  } else if (voltsPercentage >= 30) {
-    batteryLow = false;
-    return THIRTY_TO_FIFTY;
+  if (voltsPercentage >= 80) {
+    return FULL;
+  } else if (80 > voltsPercentage > 60) {
+    return DECENT;
+  } else if (60 > voltsPercentage > 40) {
+    return MODERATE;
+  } else if (40 > voltsPercentage > 20) {
+    return DEPLETED;
   } else {
-    batteryLow = true;
-    return BELOW_THIRTY;
+    return CRITICAL;
   }
 }
 
@@ -278,13 +276,16 @@ BatteryState batteryReading() {
 void batteryFlash(BatteryState state) {
   if (batteryLED) {
     switch (state) {
-    case SEVENTY_PLUS:
+    case FULL:
       myRGB.setPixelColor(0, blue);
       break;
-    case FIFTY_TO_SEVENTY:
+    case DECENT:
+      myRGB.setPixelColor(0, cyan);
+      break;
+    case MODERATE:
       myRGB.setPixelColor(0, green);
       break;
-    case THIRTY_TO_FIFTY:
+    case DEPLETED:
       myRGB.setPixelColor(0, yellow);
       break;
     default:
@@ -299,6 +300,10 @@ void batteryFlash(BatteryState state) {
     Serial.print(battery._voltsPercentage);
     Serial.println("%");
 #endif
+    myRGB.show();
+  } else {
+    myRGB.clear();
+    myRGB.show();
   }
 }
 
@@ -310,17 +315,20 @@ void batteryFlash(BatteryState state) {
  */
 void batteryCheck(void* pvParameter) {
   battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
+  unsigned long flashOnMillis = 0;
   while (1) {
+    BatteryState state = batteryReading(); // 定期进行电量检测，所以不直接把batteryReading函数作为形参传入
     // 未到低电量阈值时采用指示+休眠方式
-    if (!batteryLow) {
-      myRGB.clear();
-      BatteryState  state         = batteryReading(); // 定期进行电量检测，所以不直接把batteryReading函数作为形参传入
-      unsigned long flashOnMillis = millis();
+    if (!state == CRITICAL) {
+      // 首次进入显示状态，记录开始时间
+      if (flashOnMillis == 0) {
+        flashOnMillis = millis();
+      }
       if (millis() - flashOnMillis < FLASH_INTERVAL) { // 判断是否唤醒显示
         batteryFlash(state);
       } else {
-        myRGB.clear();
-        batteryLED = false;
+        batteryLED    = false;
+        flashOnMillis = 0; // 重置计时器
       }
     } else {
       // 根据电量百分比调整检测频率，电量越低检测越频繁
