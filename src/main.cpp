@@ -1,5 +1,3 @@
-#include "I2Cdev.h"
-#include "MPU6050_6Axis_MotionApps20.h"
 #include "OneButton.h"
 #include "Wire.h"
 #include "batteryReading.hpp"
@@ -51,7 +49,7 @@ unsigned long lastSendTime = 0;
 #define SDA_PIN 21
 #define SCL_PIN 22
 
-MPU6050 mpu;
+// MPU6050 mpu;
 // float yaw, gyro_Z; // Z轴角度，Z轴角速度
 // MPU6050 mpu6050(Wire);
 
@@ -64,7 +62,6 @@ MPU6050 mpu;
 #define STEP_SPEED 36
 
 OneButton functionButton;
-// OneButton batteryButton;
 
 /*---------------------------------------------- 蜂鸣器 ----------------------------------------------*/
 
@@ -84,15 +81,12 @@ OneButton functionButton;
 #define SHORT_FLASH_INTERVAL 200
 #define LONG_FLASH_DURATION 500
 #define LONG_FLASH_INTERVAL 500
-#define FLASH_INTERVAL 30000
-
-uint16_t brightness; // 动态亮度
 
 Adafruit_NeoPixel myRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
 uint32_t          red    = myRGB.Color(255, 0, 0);   // 红色
 uint32_t          green  = myRGB.Color(0, 255, 0);   // 绿色
 uint32_t          blue   = myRGB.Color(0, 0, 255);   // 蓝色
-uint32_t          cyan   = myRGB.Color(0, 125, 255); // 青色
+uint32_t          cyan   = myRGB.Color(0, 180, 255); // 青色
 uint32_t          yellow = myRGB.Color(255, 40, 0);  // 黄色
 
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
@@ -109,9 +103,11 @@ uint32_t          yellow = myRGB.Color(255, 40, 0);  // 黄色
 #define USB_PIN 34
 #define BATTERY_MAX_VALUE 4.2                  // 电池最大电量
 #define BATTERY_MIN_VALUE 3.2                  // 电池最小电量
-#define BATTERY_MIN_PERCENTAGE 20              // 电池最低百分比
-#define BATTERY_READING_AVERAGE 50             // 采样次数
+#define BATTERY_READING_AVERAGE 50             // 均值滤波采样次数
 #define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 3分钟*60秒*1000毫秒
+#define BATTERY_WARNING_INTERVAL 1 * 60 * 1000 // 低电量报警间隔
+#define BATTERY_LED_INTERVAL 30000             // 指示灯休眠间隔
+
 #define R1 9990
 #define R2 9980
 
@@ -173,6 +169,7 @@ void esp_now_connect() {
     memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
     peerInfo.channel = 1;                          // 设置通信频道
     esp_now_add_peer(&peerInfo);                   // 添加通信对象
+    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
     // 指示灯提示
     myRGB.clear();
     myRGB.setPixelColor(0, red);
@@ -269,7 +266,7 @@ BatteryState batteryReading() {
   }
 }
 
-/**  电量指示
+/**  电量指示颜色判断
  * @brief     用ws2812b不同颜色指示电量状态
  * @param     batteryLED: 电量指示灯状态标志位
  */
@@ -291,6 +288,7 @@ void batteryFlash(BatteryState state) {
     default:
       break;
     }
+    myRGB.show();
 #if DEBUG
     Serial.println("/*****************************/");
     Serial.println("电池电量指示函数:");
@@ -300,7 +298,6 @@ void batteryFlash(BatteryState state) {
     Serial.print(battery._voltsPercentage);
     Serial.println("%");
 #endif
-    myRGB.show();
   } else {
     myRGB.clear();
     myRGB.show();
@@ -308,44 +305,57 @@ void batteryFlash(BatteryState state) {
 }
 
 /**  电量读取指示和报警任务
- * @brief     电量指示灯管理：上电/按键唤醒显示30秒后自动休眠；
-              低电量报警管理：低于设定阈值后循环报警
+ * @brief     上电/按键唤醒显示电量30秒后自动休眠，低于设定阈值后循环报警
  * @param     R1: 分压电阻R1阻值
  * @param     R2: 分压电阻R2阻值
+ * @param     flashOnMillis: 指示灯显示时间计时器
+ * @param     lastWarningTime: 低电量报警计时器
+ * @param     lastBlinkTime: 低电量指示灯闪烁计时器
+ * @param     blinkState: 低电量指示灯闪烁状态标志位
  */
 void batteryCheck(void* pvParameter) {
   battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
-  unsigned long flashOnMillis = 0;
+  unsigned long flashOnMillis   = 0;
+  unsigned long lastWarningTime = 0;
+  unsigned long lastBlinkTime   = 0;
+  bool          blinkState      = false;
   while (1) {
-    BatteryState state = batteryReading(); // 定期进行电量检测，所以不直接把batteryReading函数作为形参传入
-    // 未到低电量阈值时采用指示+休眠方式
-    if (!state == CRITICAL) {
-      // 首次进入显示状态，记录开始时间
-      if (flashOnMillis == 0) {
-        flashOnMillis = millis();
-      }
-      if (millis() - flashOnMillis < FLASH_INTERVAL) { // 判断是否唤醒显示
-        batteryFlash(state);
+    BatteryState state = batteryReading();
+    if (state != CRITICAL) {
+      if (flashOnMillis == 0) flashOnMillis = millis(); // 首次显示，记录时间
+      if (millis() - flashOnMillis < BATTERY_LED_INTERVAL) {
+        batteryFlash(state); // 定期进行电量检测，所以不直接把batteryReading函数作为形参传入
       } else {
         batteryLED    = false;
         flashOnMillis = 0; // 重置计时器
       }
-    } else {
-      // 根据电量百分比调整检测频率，电量越低检测越频繁
-      int delayTime = BATTERY_READING_INTERVAL * battery._voltsPercentage / 100 / portTICK_PERIOD_MS;
-      if (delayTime < 30 * 1000 / portTICK_PERIOD_MS) delayTime = 30 * 1000 / portTICK_PERIOD_MS; // 最小间隔30秒
-      myRGB.setPixelColor(0, red);
-      buzzer(5, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-#if DEBUG
-      Serial.print("!!! 低电量报警 !!! 电量: ");
-      Serial.print(battery._voltsPercentage);
-      Serial.println("%");
-      Serial.println("/*****************************/");
-      Serial.printf("下一次检测将在 %d 分钟后\n", delayTime * battery._voltsPercentage / 100 / 60000);
-#endif
-      vTaskDelay(delayTime);
     }
-    vTaskDelay(500 / portTICK_PERIOD_MS); // 每次检测后延时0.5秒
+    // 低电量报警。小于等于20%视为低电量
+    else {
+      flashOnMillis     = 0;                                      // 重置正常显示计时器
+      int blinkInterval = map(voltsPercentage, 0, 20, 300, 1500); // 根据电量百分比调整闪烁和报警频率。
+      if (millis() - lastBlinkTime > blinkInterval) {
+        blinkState    = !blinkState;
+        lastBlinkTime = millis();
+        if (blinkState) {
+          myRGB.setPixelColor(0, red);
+        } else {
+          myRGB.clear();
+        }
+        myRGB.show();
+      }
+      // 非阻塞蜂鸣器报警
+      if (millis() - lastWarningTime > BATTERY_WARNING_INTERVAL) {
+        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+        lastWarningTime = millis();
+#if DEBUG
+        Serial.print("!!! 低电量报警 !!! 电量: ");
+        Serial.print(battery._voltsPercentage);
+        Serial.println("%");
+#endif
+      }
+    }
+    vTaskDelay(500 / portTICK_PERIOD_MS);
   }
 }
 
@@ -419,7 +429,7 @@ void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(RGB_LED_PIN, OUTPUT);
-  pinMode(WS2812_PIN, OUTPUT);
+  // pinMode(WS2812_PIN, OUTPUT);
 
   pinMode(STEP_TURN_LEFT, INPUT_PULLUP);
   pinMode(STEP_TURN_RIGHT, INPUT_PULLUP);
