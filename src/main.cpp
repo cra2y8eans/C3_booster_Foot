@@ -133,8 +133,8 @@ enum BatteryState {
 BatteryState batteryState;
 
 float         batvolts, voltsPercentage;
-volatile bool batteryLED   = true;
-volatile bool usbPluggedIn = false;
+volatile bool batteryLED   = true;  // 电池电量指示灯标志位
+volatile bool usbPluggedIn = false; // USB插入标志位
 
 BatReading battery;
 
@@ -266,11 +266,11 @@ BatteryState batteryReading() {
   voltsPercentage = battery._voltsPercentage;
   if (voltsPercentage >= 80) {
     return FULL;
-  } else if (80 > voltsPercentage > 60) {
+  } else if (voltsPercentage >= 60) {
     return DECENT;
-  } else if (60 > voltsPercentage > 40) {
+  } else if (voltsPercentage >= 40) {
     return MODERATE;
-  } else if (40 > voltsPercentage > 20) {
+  } else if (voltsPercentage >= 20) {
     return DEPLETED;
   } else {
     return CRITICAL;
@@ -304,9 +304,9 @@ void batteryFlash(BatteryState state) {
     Serial.println("/*****************************/");
     Serial.println("电池电量指示函数:");
     Serial.print("电池电压: ");
-    Serial.print(battery._voltage);
+    Serial.print(voltage);
     Serial.print("V, 电量百分比: ");
-    Serial.print(battery._voltsPercentage);
+    Serial.print(voltsPercentage);
     Serial.println("%");
 #endif
   } else {
