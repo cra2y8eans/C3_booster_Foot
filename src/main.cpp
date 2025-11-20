@@ -1,4 +1,5 @@
 #include "OneButton.h"
+#include "Wire.h"
 #include "batteryReading.hpp"
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
@@ -8,12 +9,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
-// uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // 测试板
-uint8_t BoosterAddress[] = { 0xdc, 0xda, 0x0c, 0xc2, 0x5e, 0x08 }; // super mini
+uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // 测试板
+// uint8_t BoosterAddress[] = { 0x24, 0x58, 0x7c, 0x91, 0xdf, 0x44 }; // super mini 排针
 
 // 创建ESP NOW通讯实例
 esp_now_peer_info_t peerInfo;
@@ -39,88 +40,118 @@ struct FootPad {
 };
 FootPad footPad;
 
-bool esp_now_connected;
+volatile bool esp_now_connected, recvSucceed;
+unsigned long lastSendTime = 0;
+#define CONNECTION_TIMEOUT 500
 
 /*----------------------------------------- MPU6050 & QMC5883P -----------------------------------------*/
 
-#define SDA_PIN 19
-#define SCL_PIN 18
+#define SDA_PIN 21
+#define SCL_PIN 22
 
+// MPU6050 mpu;
 // float yaw, gyro_Z; // Z轴角度，Z轴角速度
 // MPU6050 mpu6050(Wire);
 
 /*----------------------------------------------- 操控 -----------------------------------------------*/
 
-#define STEP_TURN_LEFT 5
-#define STEP_TURN_RIGHT 0
-#define THROTTLE_PIN 6
-#define FUNCTION_PIN 7
-#define STEP_SPEED 1
+#define STEP_TURN_LEFT 32
+#define STEP_TURN_RIGHT 19
+#define THROTTLE_PIN 25
+#define FUNCTION_PIN 33
+#define STEP_SPEED 36
 
-OneButton function;
+OneButton functionButton;
 
 /*---------------------------------------------- 蜂鸣器 ----------------------------------------------*/
 
-#define BUZZER_PIN 10
-#define LONG_BEEP_DURATION 1000
-#define SHORT_BEEP_DURATION 200
-#define LONG_BEEP_INTERVAL 300
-#define SHORT_BEEP_INTERVAL 100
+#define BUZZER_PIN 18
+#define LONG_BEEP_DURATION 1000 // 长鸣时间
+#define SHORT_BEEP_DURATION 200 // 短鸣时间
+#define LONG_BEEP_INTERVAL 300  // 长鸣间隔时间
+#define SHORT_BEEP_INTERVAL 100 // 短鸣间隔时间
 
 /*----------------------------------------------- WS2812 -----------------------------------------------*/
 
-#define WS2812_PIN 8
+#define WS2812_PIN 17
 #define MAX_BRIGHTNESS 255
 #define MIN_BRIGHTNESS 0
-#define STANDARD_BRIGHTNESS 100
+#define STANDARD_BRIGHTNESS 10
 #define SHORT_FLASH_DURATION 200
 #define SHORT_FLASH_INTERVAL 200
 #define LONG_FLASH_DURATION 500
 #define LONG_FLASH_INTERVAL 500
 
-uint16_t brightness; // 动态亮度
+Adafruit_NeoPixel batteryRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel systemRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
 
-Adafruit_NeoPixel myRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
-uint32_t          red    = myRGB.Color(255, 0, 0);  // 红色
-uint32_t          green  = myRGB.Color(0, 255, 0);  // 绿色
-uint32_t          blue   = myRGB.Color(0, 0, 255);  // 蓝色
-uint32_t          yellow = myRGB.Color(255, 80, 0); // 黄色
+uint32_t red    = batteryRGB.Color(255, 0, 0);   // 红色
+uint32_t green  = batteryRGB.Color(0, 255, 0);   // 绿色
+uint32_t blue   = batteryRGB.Color(0, 0, 255);   // 蓝色
+uint32_t cyan   = batteryRGB.Color(0, 180, 255); // 青色
+uint32_t yellow = batteryRGB.Color(255, 40, 0);  // 黄色
+
+uint32_t red_system    = systemRGB.Color(255, 0, 0);
+uint32_t green_system  = systemRGB.Color(0, 255, 0);
+uint32_t blue_system   = systemRGB.Color(0, 0, 255);
+uint32_t cyan_system   = systemRGB.Color(0, 180, 255);
+uint32_t yellow_system = systemRGB.Color(255, 40, 0);
+
+/*----------------------------------------------- RGB LED-----------------------------------------------*/
+
+#define RGB_LED_PIN 12
+#define LONG_BLINK_DURATION 1000
+#define SHORT_BLINK_DURATION 200
+#define LONG_BLINK_INTERVAL 300
+#define SHORT_BLINK_INTERVAL 100
 
 /*----------------------------------------------- 电池电量 -----------------------------------------------*/
 
-#define BATTERY_PIN 4
+#define BATTERY_PIN 39
+#define BATTERY_VOLTAGE_MAX 4.2
 #define BATTERY_MAX_VALUE 4.2                  // 电池最大电量
 #define BATTERY_MIN_VALUE 3.2                  // 电池最小电量
-#define BATTERY_MIN_PERCENTAGE 20              // 电池最低百分比
-#define BATTERY_READING_AVERAGE 50             // 采样次数
-#define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 5分钟*60秒*1000毫秒
-#define R1 10000
-#define R2 9950
+#define BATTERY_READING_AVERAGE 50             // 均值滤波采样次数
+#define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 3分钟*60秒*1000毫秒
+#define BATTERY_WARNING_INTERVAL 1 * 60 * 1000 // 低电量报警间隔
+#define BATTERY_LED_INTERVAL 30000             // 指示灯休眠间隔
+#define ON_CHARGE_PIN -1                       // TP4056X charge引脚
+#define STANDBY_PIN -2                         // TP4056X stdby引脚
+#define R1 9990                                // 上电阻 单位：欧姆
+#define R2 9980                                // 下电阻 单位：欧姆
 
 enum BatteryState {
-  SEVENTY_PLUS,     // 70%以上
-  FIFTY_TO_SEVENTY, // 50%-70%
-  THIRTY_TO_FIFTY,  // 30%-50%
-  BATTERY_LOW       // 30%以下
+  FULL,      // 100% - 80%
+  DECENT,    // 80%  - 60%
+  MODERATE,  // 60%  - 40%
+  DEPLETED,  // 40%  - 20%
+  CRITICAL,  // 20%  - 0%
+  ON_CHARGE, // 正在充电
+  COMPLETE,  // 充电完成
+  ON_BATTERY // 未充电
 };
 BatteryState batteryState;
-BatReading   battery;
 
-float batvolts, voltsPercentage;
+float         batvolts, voltsPercentage;
+volatile bool batteryLED   = true;
+volatile bool usbPluggedIn = false;
 
-bool lowBatteryAlerted = false; // 低电量告警标志位
+BatReading battery;
 
 /*----------------------------------------------- 自定义函数 -----------------------------------------------*/
+
 // 数据发出去之后的回调函数
 void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
-#if DEBUG
-  status == ESP_NOW_SEND_SUCCESS ? Serial.println("数据发送回调函数：数据发送成功") : Serial.println("数据发送回调函数：数据发送失败");
-#endif
+  // 如果发送成功
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    lastSendTime = millis();
+  }
 }
 
 // 收到消息后的回调
 void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len) {
   memcpy(&booster, incomingData, sizeof(booster));
+  if (!recvSucceed) recvSucceed = true;
 }
 
 /**  蜂鸣器
@@ -139,20 +170,6 @@ void buzzer(uint8_t times, int duration, int interval) {
   }
 }
 
-// 电量开机初检
-void batteryFirstCheck() {
-  // 开机执行一次，提示电池电量
-  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE); // 引脚、R1阻值、R2阻值、最大电压、最小（报警）电压
-  battery.readMilliVolts(BATTERY_READING_AVERAGE);
-#if DEBUG
-  Serial.print("电池电压: ");
-  Serial.print(battery._voltage);
-  Serial.print("V, 电量百分比: ");
-  Serial.print(battery._voltsPercentage);
-  Serial.println("%");
-#endif
-}
-
 // ESP NOW
 void esp_now_connect() {
   WiFi.mode(WIFI_STA); // 设置wifi为STA模式
@@ -164,29 +181,32 @@ void esp_now_connect() {
     memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
     peerInfo.channel = 1;                          // 设置通信频道
     esp_now_add_peer(&peerInfo);                   // 添加通信对象
-#if DEBUG
-    Serial.println("esp now初始化函数：ESP NOW 初始化成功");
-#endif
     // 指示灯提示
-    myRGB.clear();
-    myRGB.setPixelColor(0, red);
-    myRGB.show();
+    batteryRGB.clear();
+    batteryRGB.setPixelColor(0, red);
+    batteryRGB.show();
     vTaskDelay(500 / portTICK_PERIOD_MS);
-    myRGB.clear();
-    myRGB.setPixelColor(0, green);
-    myRGB.show();
+    batteryRGB.clear();
+    batteryRGB.setPixelColor(0, green);
+    batteryRGB.show();
     vTaskDelay(500 / portTICK_PERIOD_MS);
-    myRGB.clear();
-    myRGB.setPixelColor(0, blue);
-    myRGB.show();
+    batteryRGB.clear();
+    batteryRGB.setPixelColor(0, blue);
+    batteryRGB.show();
     vTaskDelay(500 / portTICK_PERIOD_MS);
-    myRGB.clear();
+    batteryRGB.clear();
+    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL); // 长鸣一声代表ESP NOW初始化成功
+#if DEBUG
+    Serial.println("ESP NOW 初始化成功");
+#endif
   } else {
+// 如果初始化失败则重连
+#if DEBUG
+    Serial.println("ESP NOW 初始化失败，正在重连...");
+#endif
     // 报警
-    myRGB.clear();
-    myRGB.setPixelColor(0, red);
-    myRGB.show();
-    // 尝试重试3次
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    // 尝试重连3次
     bool reconnect_3_times = false;
     while (!reconnect_3_times) {
       for (int i = 0; i < 3; i++) {
@@ -212,87 +232,169 @@ void esp_now_connect() {
   }
 }
 
-// 功能按键回调函数
-void functionButton() {
+// 功能按键长按回调函数
+void longPressed_callback() {
   footPad.stepData[3] = !footPad.stepData[3];
-  buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+  buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
   if (footPad.stepData[3]) {
-    Serial.println("功能键按下");
+    Serial.println("功能键长按");
   }
 #endif
 }
 
-// 电量读取
-BatteryState batteryReading() {
-  battery.readMilliVolts(BATTERY_READING_AVERAGE);
-  voltsPercentage = battery._voltsPercentage;
-  batvolts        = battery._voltage;
-  if (voltsPercentage >= 70)
-    return SEVENTY_PLUS;
-  else if (voltsPercentage >= 50)
-    return FIFTY_TO_SEVENTY;
-  else if (voltsPercentage >= 30)
-    return THIRTY_TO_FIFTY;
-  else
-    return BATTERY_LOW;
+// 功能按键短按回调函数
+void shortPressed_callback() {
+  batteryLED = true;
+  buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
 #if DEBUG
-  Serial.print("电池电压: ");
-  Serial.print(battery._voltage);
-  Serial.print("V, 电量百分比: ");
-  Serial.print(battery._voltsPercentage);
-  Serial.println("%");
+  if (footPad.stepData[3]) {
+    Serial.println("功能键短按");
+  }
 #endif
 }
 
-// 电池电量提示与报警
-void batteryCheck(void* pvParameter) {
-  while (1) {
-    int delayTime = BATTERY_READING_INTERVAL * voltsPercentage / 100 / portTICK_PERIOD_MS; // 根据电量百分比调整检测频率，电量越低检测越频繁
-    if (delayTime < 1 * 60 * 1000 / portTICK_PERIOD_MS) {                                  // 最小间隔1分钟
-      delayTime = 1 * 60 * 1000 / portTICK_PERIOD_MS;
-    }
-    switch (batteryReading()) {
-    case SEVENTY_PLUS:
-      myRGB.setPixelColor(0, blue);
+/**  电量读取
+ * @brief     读取电量，更新电压、电量两变量，并返回电量状态
+ * @param     voltsPercentage: 电量百分比
+ * @param     batvolts: 电压值
+ * @return    BatteryState: 电量状态枚举
+ */
+BatteryState batteryReading() {
+  battery.readMilliVolts(BATTERY_READING_AVERAGE);
+  batvolts        = battery._voltage;
+  voltsPercentage = battery._voltsPercentage;
+  if (voltsPercentage >= 80) {
+    return FULL;
+  } else if (80 > voltsPercentage > 60) {
+    return DECENT;
+  } else if (60 > voltsPercentage > 40) {
+    return MODERATE;
+  } else if (40 > voltsPercentage > 20) {
+    return DEPLETED;
+  } else {
+    return CRITICAL;
+  }
+}
+
+/**  电量指示颜色判断
+ * @brief     用ws2812b不同颜色指示电量状态
+ * @param     batteryLED: 电量指示灯状态标志位
+ */
+void batteryFlash(BatteryState state) {
+  if (batteryLED) {
+    switch (state) {
+    case FULL:
+      batteryRGB.setPixelColor(0, blue);
       break;
-    case FIFTY_TO_SEVENTY:
-      myRGB.setPixelColor(0, green);
+    case DECENT:
+      batteryRGB.setPixelColor(0, cyan);
       break;
-    case THIRTY_TO_FIFTY:
-      myRGB.setPixelColor(0, yellow);
+    case MODERATE:
+      batteryRGB.setPixelColor(0, green);
       break;
-    case BATTERY_LOW:
-      myRGB.setPixelColor(0, red);
-      if (!lowBatteryAlerted) {
-        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-        lowBatteryAlerted = true;
-      } else {
-        lowBatteryAlerted = false;
-      }
-      vTaskDelay(delayTime);
+    case DEPLETED:
+      batteryRGB.setPixelColor(0, yellow);
       break;
     default:
       break;
     }
-    myRGB.show();
+    batteryRGB.show();
+#if DEBUG
+    Serial.println("/*****************************/");
+    Serial.println("电池电量指示函数:");
+    Serial.print("电池电压: ");
+    Serial.print(battery._voltage);
+    Serial.print("V, 电量百分比: ");
+    Serial.print(battery._voltsPercentage);
+    Serial.println("%");
+#endif
+  } else {
+    batteryRGB.clear();
+    batteryRGB.show();
+  }
+}
+
+/**  电量读取指示和报警任务
+ * @brief     上电/按键唤醒显示电量30秒后自动休眠，低于设定阈值后循环报警
+ * @param     R1: 分压电阻R1阻值
+ * @param     R2: 分压电阻R2阻值
+ * @param     flashOnMillis: 指示灯显示时间计时器
+ * @param     lastWarningTime: 低电量报警计时器
+ * @param     lastBlinkTime: 低电量指示灯闪烁计时器
+ * @param     blinkState: 低电量指示灯闪烁状态标志位
+ */
+void batteryCheck(void* pvParameter) {
+  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
+  unsigned long flashOnMillis   = 0;
+  unsigned long lastWarningTime = 0;
+  unsigned long lastBlinkTime   = 0;
+  bool          blinkState      = false;
+  while (1) {
+    BatteryState state = batteryReading();
+    if (state != CRITICAL) {
+      if (flashOnMillis == 0) flashOnMillis = millis(); // 首次显示，记录时间
+      if (millis() - flashOnMillis < BATTERY_LED_INTERVAL) {
+        batteryFlash(state); // 定期进行电量检测，所以不直接把batteryReading函数作为形参传入
+      } else {
+        batteryLED    = false;
+        flashOnMillis = 0; // 重置计时器
+      }
+    }
+    // 低电量报警。小于等于20%视为低电量
+    else {
+      flashOnMillis     = 0;                                      // 重置正常显示计时器
+      int blinkInterval = map(voltsPercentage, 0, 20, 300, 1500); // 根据电量百分比调整闪烁和报警频率。
+      if (millis() - lastBlinkTime > blinkInterval) {
+        blinkState    = !blinkState;
+        lastBlinkTime = millis();
+        if (blinkState) {
+          batteryRGB.setPixelColor(0, red);
+        } else {
+          batteryRGB.clear();
+        }
+        batteryRGB.show();
+      }
+      // 非阻塞蜂鸣器报警
+      if (millis() - lastWarningTime > BATTERY_WARNING_INTERVAL) {
+        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+        lastWarningTime = millis();
+#if DEBUG
+        Serial.print("!!! 低电量报警 !!! 电量: ");
+        Serial.print(battery._voltsPercentage);
+        Serial.println("%");
+#endif
+      }
+    }
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+  }
+}
+
+// usb状态改变中断处理函数
+void IRAM_ATTR handleUSBInterrupt() {
+  if (digitalRead(STANDBY_PIN) == LOW || digitalRead(ON_CHARGE_PIN) == LOW) {
+    usbPluggedIn = true;
+    if (digitalRead(STANDBY_PIN) == LOW) batteryState = COMPLETE;
+    if (digitalRead(ON_CHARGE_PIN) == LOW) batteryState = ON_CHARGE;
+  } else {
+    usbPluggedIn = false;
   }
 }
 
 // 数据发送任务
 void dataTransmit(void* pvParameter) {
-  function.setup(FUNCTION_PIN, INPUT_PULLUP);
-  function.attachLongPressStart(functionButton);
-  function.setPressMs(600);
+  functionButton.setup(FUNCTION_PIN, INPUT_PULLUP);
+  functionButton.attachLongPressStart(longPressed_callback);
+  functionButton.attachClick(shortPressed_callback);
+  functionButton.setPressMs(800);
   TickType_t       xLastWakeTime = xTaskGetTickCount();
   const TickType_t xPeriod       = pdMS_TO_TICKS(12.5); // 频率 80Hz → 周期为 1/80 = 0.0125 秒 = 12.5 毫秒
   while (1) {
-    function.tick();
+    functionButton.tick();
     footPad.stepData[0] = digitalRead(STEP_TURN_LEFT);  // 左转
     footPad.stepData[1] = digitalRead(STEP_TURN_RIGHT); // 右转
     footPad.stepData[2] = digitalRead(THROTTLE_PIN);    // 电推油门
     footPad.stepSpeed   = analogRead(STEP_SPEED);
-
 #if DEBUG
     if (footPad.stepData[0] == LOW && footPad.stepData[1] == HIGH) {
       Serial.println("左转");
@@ -309,31 +411,83 @@ void dataTransmit(void* pvParameter) {
     vTaskDelayUntil(&xLastWakeTime, xPeriod);
   }
 }
+
+void esp_now_connection(void* pvParameter) {
+  bool          lastConnectionState = false;
+  bool          blinkState          = false;
+  unsigned long lastBlinkTime       = 0;
+  while (1) {
+    unsigned long currentTime = millis();
+    esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);
+    // 状态变化时立即更新显示
+    if (lastConnectionState != esp_now_connected) {
+      lastConnectionState = esp_now_connected;
+      if (esp_now_connected) {
+        // 连接恢复：蓝色常亮
+        blinkState = false;
+        systemRGB.clear();
+        systemRGB.setPixelColor(0, blue_system);
+        systemRGB.show();
+      } else {
+        // 断开连接：立即显示红色
+        blinkState    = true;
+        lastBlinkTime = currentTime;
+        systemRGB.clear();
+        systemRGB.setPixelColor(0, red_system);
+        systemRGB.show();
+        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+      }
+    }
+    if (!esp_now_connected) {
+      if (currentTime - lastBlinkTime > 300) {
+        lastBlinkTime = currentTime;
+        blinkState    = !blinkState;
+        systemRGB.clear();
+        if (blinkState) systemRGB.setPixelColor(0, red_system);
+        systemRGB.show();
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+
 /*-------------------------------------------------------------------------------------------------------------*/
 
 void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(WS2812_PIN, OUTPUT);
+  pinMode(RGB_LED_PIN, OUTPUT);
 
   pinMode(STEP_TURN_LEFT, INPUT_PULLUP);
   pinMode(STEP_TURN_RIGHT, INPUT_PULLUP);
   pinMode(THROTTLE_PIN, INPUT_PULLUP);
   pinMode(FUNCTION_PIN, INPUT_PULLUP);
+  pinMode(STANDBY_PIN, INPUT);
+  pinMode(ON_CHARGE_PIN, INPUT);
 
   analogReadResolution(12);
 
+  batteryRGB.begin();
+  batteryRGB.setBrightness(STANDARD_BRIGHTNESS);
+  systemRGB.begin();
+  systemRGB.setBrightness(STANDARD_BRIGHTNESS);
+
   esp_now_connect();
-  batteryFirstCheck();
+  footPad.stepData[3] = false; // 功能键初始状态为假
+
+  attachInterrupt(STANDBY_PIN, handleUSBInterrupt, CHANGE);
+  attachInterrupt(ON_CHARGE_PIN, handleUSBInterrupt, CHANGE);
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
+  xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 1, NULL, 1, NULL);
+
+  systemRGB.setPixelColor(0, green_system); // 初始化成功为绿色
+  systemRGB.show();
 
 #if DEBUG
   Serial.println("脚控初始化完成");
 #endif
 }
 void loop() {
-  esp_now_connected == true ? Serial.println("ESP-NOW 连接成功") : Serial.println("ESP-NOW 连接失败");
-  delay(1000);
 }
