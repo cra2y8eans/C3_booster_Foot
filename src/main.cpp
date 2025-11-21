@@ -73,7 +73,8 @@ OneButton functionButton;
 
 /*----------------------------------------------- WS2812 -----------------------------------------------*/
 
-#define WS2812_PIN 17
+#define WS2812_BATTERY_PIN 17
+#define WS2812_SYSTEM_PIN -3
 #define MAX_BRIGHTNESS 255
 #define MIN_BRIGHTNESS 0
 #define STANDARD_BRIGHTNESS 10
@@ -82,8 +83,8 @@ OneButton functionButton;
 #define LONG_FLASH_DURATION 500
 #define LONG_FLASH_INTERVAL 500
 
-Adafruit_NeoPixel batteryRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel systemRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel batteryRGB(1, WS2812_BATTERY_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel systemRGB(1, WS2812_SYSTEM_PIN, NEO_GRB + NEO_KHZ800);
 
 uint32_t red    = batteryRGB.Color(255, 0, 0);   // 红色
 uint32_t green  = batteryRGB.Color(0, 255, 0);   // 绿色
@@ -121,20 +122,25 @@ uint32_t yellow_system = systemRGB.Color(255, 40, 0);
 #define R2 9980                                // 下电阻 单位：欧姆
 
 enum BatteryState {
-  FULL,      // 100% - 80%
-  DECENT,    // 80%  - 60%
-  MODERATE,  // 60%  - 40%
-  DEPLETED,  // 40%  - 20%
-  CRITICAL,  // 20%  - 0%
-  ON_CHARGE, // 正在充电
-  COMPLETE,  // 充电完成
-  ON_BATTERY // 未充电
+  FULL,     // 100% - 80%
+  DECENT,   // 80%  - 60%
+  MODERATE, // 60%  - 40%
+  DEPLETED, // 40%  - 20%
+  CRITICAL, // 20%  - 0%
 };
 BatteryState batteryState;
 
+enum BatteryChargeState {
+  ON_CHARGE, // 正在充电
+  COMPLETE,  // 充电完成
+  FAULT      // 充电故障
+};
+BatteryChargeState batteryChargeState;
+
 float         batvolts, voltsPercentage;
-volatile bool batteryLED   = true;  // 电池电量指示灯标志位
-volatile bool usbPluggedIn = false; // USB插入标志位
+volatile bool batteryLED      = true;  // 电池电量指示灯标志位
+volatile bool usbPluggedIn    = false; // USB插入标志位
+volatile bool usbStateChanged = false;
 
 BatReading battery;
 
@@ -172,59 +178,94 @@ void buzzer(uint8_t times, int duration, int interval) {
 
 // ESP NOW
 void esp_now_connect() {
-  WiFi.mode(WIFI_STA); // 设置wifi为STA模式
-  WiFi.begin();
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
   if (esp_now_init() == ESP_OK) {
-    esp_now_register_send_cb(OnDataSent); // 注册发送成功的回调函数
-    esp_now_register_recv_cb(OnDataRecv); // 注册接受数据后的回调函数
+    esp_now_register_send_cb(OnDataSent);
+    esp_now_register_recv_cb(OnDataRecv);
+
     // 注册通信频道
-    memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
-    peerInfo.channel = 1;                          // 设置通信频道
-    esp_now_add_peer(&peerInfo);                   // 添加通信对象
-    // 指示灯提示
-    batteryRGB.clear();
-    batteryRGB.setPixelColor(0, red);
-    batteryRGB.show();
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-    batteryRGB.clear();
-    batteryRGB.setPixelColor(0, green);
-    batteryRGB.show();
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-    batteryRGB.clear();
-    batteryRGB.setPixelColor(0, blue);
-    batteryRGB.show();
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-    batteryRGB.clear();
-    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL); // 长鸣一声代表ESP NOW初始化成功
+    memcpy(peerInfo.peer_addr, BoosterAddress, 6);
+    peerInfo.channel = 1;
+
+    // 主初始化错误检查
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+      buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+      esp_now_connected = false;
+      systemRGB.clear();
+      systemRGB.setPixelColor(0, red_system);
+      systemRGB.show();
 #if DEBUG
-    Serial.println("ESP NOW 初始化成功");
+      Serial.println("添加peer失败");
 #endif
+    } else {
+      // 添加peer成功，设置连接状态和执行成功提示
+      esp_now_connected = true;
+
+      // 成功指示灯提示
+      batteryRGB.clear();
+      batteryRGB.setPixelColor(0, red);
+      batteryRGB.show();
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      batteryRGB.clear();
+      batteryRGB.setPixelColor(0, green);
+      batteryRGB.show();
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      batteryRGB.clear();
+      batteryRGB.setPixelColor(0, blue);
+      batteryRGB.show();
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      batteryRGB.clear();
+      buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+
+#if DEBUG
+      Serial.println("ESP NOW 初始化成功");
+#endif
+      return; // 成功就直接返回，不需要重连逻辑，直接跳出整个函数
+    }
   } else {
-// 如果初始化失败则重连
 #if DEBUG
     Serial.println("ESP NOW 初始化失败，正在重连...");
 #endif
     // 报警
     buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+
     // 尝试重连3次
-    bool reconnect_3_times = false;
-    while (!reconnect_3_times) {
-      for (int i = 0; i < 3; i++) {
-        buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-// 重连
+    bool reconnectSuccess = false;
+    for (int i = 0; i < 3; i++) {
 #if DEBUG
-        Serial.printf("重连第 %d 次...\n", i + 1);
+      Serial.printf("重连第 %d 次...\n", i + 1);
 #endif
-        esp_now_init();                                // 初始化ESP NOW
-        esp_now_register_send_cb(OnDataSent);          // 注册发送成功的回调函数
-        esp_now_register_recv_cb(OnDataRecv);          // 注册接受数据后的回调函数
-        memcpy(peerInfo.peer_addr, BoosterAddress, 6); // 设置配对设备的MAC地址并储存，参数为拷贝地址、拷贝对象、数据长度
-        peerInfo.channel = 1;                          // 设置通信频道
-        esp_now_add_peer(&peerInfo);                   // 添加通信对象
-        vTaskDelay(5000 / portTICK_PERIOD_MS);         // 延时5秒
+      esp_now_init();
+      esp_now_register_send_cb(OnDataSent);
+      esp_now_register_recv_cb(OnDataRecv);
+      memcpy(peerInfo.peer_addr, BoosterAddress, 6);
+      peerInfo.channel = 1;
+      // 重连错误检查
+      if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+#if DEBUG
+        Serial.printf("重连第 %d 次：添加peer失败\n", i + 1);
+#endif
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        continue; // 跳过本次for循环，继续往下循环（for循环内continue之后的代码不会执行了）
+      } else {
+        // 测试连接
+        if (esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad)) == ESP_OK) {
+          reconnectSuccess  = true;
+          esp_now_connected = true;
+          buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+#if DEBUG
+          Serial.printf("重连第 %d 次成功\n", i + 1);
+#endif
+          break; // 跳出for循环（可以理解为找到要找到的答案了）
+        }
       }
-      reconnect_3_times = true; // 如果3次重连都失败，则退出循环
+    }
+
+    if (!reconnectSuccess) {
       esp_now_connected = false;
+      buzzer(5, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL); // 长时间错误提示
 #if DEBUG
       Serial.println("ESP NOW 重连失败");
 #endif
@@ -252,6 +293,37 @@ void shortPressed_callback() {
     Serial.println("功能键短按");
   }
 #endif
+}
+
+// usb状态改变中断处理函数
+void IRAM_ATTR handleUSBInterrupt() {
+  usbStateChanged = true;
+}
+
+// usb状态判断函数
+void usbMode() {
+  // TP4056状态真值表：
+  //    STANDBY | ON_CHARGE | 状态
+  //    ---------------------------
+  //      HIGH  |   LOW     | 充电中
+  //      LOW   |   HIGH    | 充电完成
+  //      HIGH  |   HIGH    | 未充电/无USB
+  //      LOW   |   LOW     | 故障状态（不应出现）
+  if (usbStateChanged) {
+    usbStateChanged = false;
+    if (digitalRead(STANDBY_PIN) == HIGH && digitalRead(ON_CHARGE_PIN) == LOW) {
+      usbPluggedIn       = true;
+      batteryChargeState = ON_CHARGE;
+    } else if (digitalRead(STANDBY_PIN) == LOW && digitalRead(ON_CHARGE_PIN) == HIGH) {
+      usbPluggedIn       = true;
+      batteryChargeState = COMPLETE;
+    } else if (digitalRead(STANDBY_PIN) == HIGH && digitalRead(ON_CHARGE_PIN) == HIGH) {
+      usbPluggedIn = false;
+    } else {
+      usbPluggedIn       = false;
+      batteryChargeState = FAULT;
+    }
+  }
 }
 
 /**  电量读取
@@ -282,37 +354,80 @@ BatteryState batteryReading() {
  * @param     batteryLED: 电量指示灯状态标志位
  */
 void batteryFlash(BatteryState state) {
+  // 用户踩下按钮时根据电量状态显示不同颜色
   if (batteryLED) {
-    switch (state) {
-    case FULL:
-      batteryRGB.setPixelColor(0, blue);
-      break;
-    case DECENT:
-      batteryRGB.setPixelColor(0, cyan);
-      break;
-    case MODERATE:
-      batteryRGB.setPixelColor(0, green);
-      break;
-    case DEPLETED:
-      batteryRGB.setPixelColor(0, yellow);
-      break;
-    default:
-      break;
-    }
-    batteryRGB.show();
 #if DEBUG
+    Serial.println("用户踩下按钮");
     Serial.println("/*****************************/");
     Serial.println("电池电量指示函数:");
     Serial.print("电池电压: ");
-    Serial.print(voltage);
+    Serial.print(batvolts);
     Serial.print("V, 电量百分比: ");
     Serial.print(voltsPercentage);
     Serial.println("%");
 #endif
+    switch (state) {
+    case FULL:
+      batteryRGB.setPixelColor(0, blue); // 80-100%: 蓝色
+      break;
+    case DECENT:
+      batteryRGB.setPixelColor(0, cyan); // 60-79%: 青色
+      break;
+    case MODERATE:
+      batteryRGB.setPixelColor(0, green); // 40-59%: 绿色
+      break;
+    case DEPLETED:
+      batteryRGB.setPixelColor(0, yellow); // 20-39%: 黄色
+      break;
+    default:
+      break;
+    }
   } else {
     batteryRGB.clear();
-    batteryRGB.show();
   }
+  batteryRGB.show();
+}
+
+/**  充电指示判断
+ * @brief 正在充电指示灯红色常亮，充满绿色常亮，股长红绿色交替闪烁
+ * @param state: 充电状态枚举
+ */
+void chargeFlash(BatteryChargeState state) {
+  batteryRGB.clear();
+#if DEBUG
+  Serial.println("USB插入");
+#endif
+  switch (batteryChargeState) {
+  case ON_CHARGE:
+    batteryRGB.setPixelColor(0, red);
+#if DEBUG
+    Serial.println("正在充电");
+#endif
+    break;
+  case COMPLETE:
+    batteryRGB.setPixelColor(0, green);
+#if DEBUG
+    Serial.println("充电完成");
+#endif
+    break;
+  case FAULT:
+    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+    batteryRGB.clear();
+    batteryRGB.setPixelColor(0, red);
+    batteryRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    batteryRGB.clear();
+    batteryRGB.setPixelColor(0, green);
+    batteryRGB.show();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+#if DEBUG
+    Serial.println("充电故障");
+#endif
+    break;
+  default:
+    break;
+  }
+  batteryRGB.show();
 }
 
 /**  电量读取指示和报警任务
@@ -330,54 +445,46 @@ void batteryCheck(void* pvParameter) {
   unsigned long lastWarningTime = 0;
   unsigned long lastBlinkTime   = 0;
   bool          blinkState      = false;
+  usbMode();
   while (1) {
     BatteryState state = batteryReading();
-    if (state != CRITICAL) {
-      if (flashOnMillis == 0) flashOnMillis = millis(); // 首次显示，记录时间
-      if (millis() - flashOnMillis < BATTERY_LED_INTERVAL) {
-        batteryFlash(state); // 定期进行电量检测，所以不直接把batteryReading函数作为形参传入
-      } else {
-        batteryLED    = false;
-        flashOnMillis = 0; // 重置计时器
-      }
-    }
-    // 低电量报警。小于等于20%视为低电量
-    else {
-      flashOnMillis     = 0;                                      // 重置正常显示计时器
-      int blinkInterval = map(voltsPercentage, 0, 20, 300, 1500); // 根据电量百分比调整闪烁和报警频率。
-      if (millis() - lastBlinkTime > blinkInterval) {
-        blinkState    = !blinkState;
-        lastBlinkTime = millis();
-        if (blinkState) {
-          batteryRGB.setPixelColor(0, red);
+    if (usbPluggedIn) {
+      chargeFlash(batteryChargeState);
+    } else {
+      if (state != CRITICAL) {
+        if (flashOnMillis == 0) flashOnMillis = millis(); // 首次显示，记录时间
+        if (millis() - flashOnMillis < BATTERY_LED_INTERVAL) {
+          batteryFlash(state);
         } else {
-          batteryRGB.clear();
+          batteryLED    = false;
+          flashOnMillis = 0; // 重置计时器
         }
-        batteryRGB.show();
-      }
-      // 非阻塞蜂鸣器报警
-      if (millis() - lastWarningTime > BATTERY_WARNING_INTERVAL) {
-        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-        lastWarningTime = millis();
+      } else {                                                      // 充电状态不报警
+        flashOnMillis     = 0;                                      // 重置正常显示计时器
+        int blinkInterval = map(voltsPercentage, 0, 20, 300, 1500); // 根据电量百分比调整闪烁和报警频率。
+        if (millis() - lastBlinkTime > blinkInterval) {
+          blinkState    = !blinkState;
+          lastBlinkTime = millis();
+          if (blinkState) {
+            batteryRGB.setPixelColor(0, red);
+          } else {
+            batteryRGB.clear();
+          }
+          batteryRGB.show();
+        }
+        // 非阻塞蜂鸣器报警
+        if (millis() - lastWarningTime > BATTERY_WARNING_INTERVAL) {
+          buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+          lastWarningTime = millis();
 #if DEBUG
-        Serial.print("!!! 低电量报警 !!! 电量: ");
-        Serial.print(battery._voltsPercentage);
-        Serial.println("%");
+          Serial.print("!!! 低电量报警 !!! 电量: ");
+          Serial.print(battery._voltsPercentage);
+          Serial.println("%");
 #endif
+        }
       }
     }
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-  }
-}
-
-// usb状态改变中断处理函数
-void IRAM_ATTR handleUSBInterrupt() {
-  if (digitalRead(STANDBY_PIN) == LOW || digitalRead(ON_CHARGE_PIN) == LOW) {
-    usbPluggedIn = true;
-    if (digitalRead(STANDBY_PIN) == LOW) batteryState = COMPLETE;
-    if (digitalRead(ON_CHARGE_PIN) == LOW) batteryState = ON_CHARGE;
-  } else {
-    usbPluggedIn = false;
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
@@ -478,8 +585,8 @@ void setup() {
   attachInterrupt(STANDBY_PIN, handleUSBInterrupt, CHANGE);
   attachInterrupt(ON_CHARGE_PIN, handleUSBInterrupt, CHANGE);
 
-  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
-  xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
+  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 4, NULL, 1, NULL);
+  xTaskCreate(batteryCheck, "batteryCheck", 1024 * 4, NULL, 1, NULL);
   xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 1, NULL, 1, NULL);
 
   systemRGB.setPixelColor(0, green_system); // 初始化成功为绿色
