@@ -82,11 +82,11 @@ OneButton functionButton;
 #define LONG_FLASH_INTERVAL 500
 
 Adafruit_NeoPixel myRGB(1, WS2812_PIN, NEO_GRB + NEO_KHZ800);
-uint32_t          red    = myRGB.Color(255, 0, 0);   // 红色
-uint32_t          green  = myRGB.Color(0, 255, 0);   // 绿色
-uint32_t          blue   = myRGB.Color(0, 0, 255);   // 蓝色
-uint32_t          cyan   = myRGB.Color(0, 180, 255); // 青色
-uint32_t          yellow = myRGB.Color(255, 40, 0);  // 黄色
+int               red    = myRGB.Color(255, 0, 0);   // 红色
+int               green  = myRGB.Color(0, 255, 0);   // 绿色
+int               blue   = myRGB.Color(0, 0, 255);   // 蓝色
+int               cyan   = myRGB.Color(0, 180, 255); // 青色
+int               yellow = myRGB.Color(255, 40, 0);  // 黄色
 
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
 
@@ -157,10 +157,46 @@ void buzzer(uint8_t times, int duration, int interval) {
   }
 }
 
+/**  指示灯
+ * @brief     适用于单个颜色闪烁
+ * @param     times:    闪烁次数
+ * @param     duration: 持续时间，单位毫秒
+ * @param     interval: 每次闪烁的间隔时间，单位毫秒
+ * @param     color:    颜色值
+ */
+void rgbBlink(int rgb_num, int times, int duration, int interval, int color) {
+  if (times == 1) interval = 0; // 如果只闪烁一次则不间隔
+  for (int i = 0; i < times; i++) {
+    myRGB.clear();
+    myRGB.setPixelColor(0, color); // led编号和颜色，编号从0开始。
+    myRGB.show();
+    vTaskDelay(duration / portTICK_PERIOD_MS);
+    myRGB.clear();
+    myRGB.show();
+    vTaskDelay(interval / portTICK_PERIOD_MS);
+  }
+}
+// 多色闪烁
+void mutipleColorBlink(int colors[], int duration, int interval) {
+  int times = sizeof(colors) / sizeof(colors[0]);
+  for (int i = 0; i < times; i++) {
+    myRGB.clear();
+    myRGB.setPixelColor(0, colors[i]);
+    myRGB.show();
+    vTaskDelay(duration / portTICK_PERIOD_MS);
+    myRGB.clear();
+    myRGB.show();
+    vTaskDelay(interval / portTICK_PERIOD_MS);
+  }
+  myRGB.clear();
+  myRGB.show();
+}
+
 // ESP NOW
 void esp_now_connect() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  int colors[] = { red, green, blue };
   if (esp_now_init() == ESP_OK) {
     esp_now_register_send_cb(OnDataSent);
     esp_now_register_recv_cb(OnDataRecv);
@@ -179,19 +215,7 @@ void esp_now_connect() {
       if (esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad)) == ESP_OK) {
         esp_now_connected = true;
         // 成功指示灯提示
-        myRGB.clear();
-        myRGB.setPixelColor(0, red);
-        myRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        myRGB.clear();
-        myRGB.setPixelColor(0, green);
-        myRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        myRGB.clear();
-        myRGB.setPixelColor(0, blue);
-        myRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        myRGB.clear();
+        mutipleColorBlink(colors, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
         buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
         Serial.println("ESP NOW 初始化成功");
@@ -225,19 +249,7 @@ void esp_now_connect() {
         reconnectSuccess  = true;
         esp_now_connected = true;
         // 成功指示灯提示
-        myRGB.clear();
-        myRGB.setPixelColor(0, red);
-        myRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        myRGB.clear();
-        myRGB.setPixelColor(0, green);
-        myRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        myRGB.clear();
-        myRGB.setPixelColor(0, blue);
-        myRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        myRGB.clear();
+        mutipleColorBlink(colors, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
         buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
         Serial.printf("重连第 %d 次成功\n", i + 1);
