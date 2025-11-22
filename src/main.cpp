@@ -177,9 +177,8 @@ void rgbBlink(int rgb_num, int times, int duration, int interval, int color) {
   }
 }
 // 多色闪烁
-void mutipleColorBlink(int colors[], int duration, int interval) {
-  int times = sizeof(colors) / sizeof(colors[0]);
-  for (int i = 0; i < times; i++) {
+void mutipleColorBlink(int colors[], int colorNum, int duration, int interval) {
+  for (int i = 0; i < colorNum; i++) {
     myRGB.clear();
     myRGB.setPixelColor(0, colors[i]);
     myRGB.show();
@@ -188,8 +187,6 @@ void mutipleColorBlink(int colors[], int duration, int interval) {
     myRGB.show();
     vTaskDelay(interval / portTICK_PERIOD_MS);
   }
-  myRGB.clear();
-  myRGB.show();
 }
 
 // ESP NOW
@@ -215,7 +212,7 @@ void esp_now_connect() {
       if (esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad)) == ESP_OK) {
         esp_now_connected = true;
         // 成功指示灯提示
-        mutipleColorBlink(colors, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
+        mutipleColorBlink(colors, 3, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
         buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
         Serial.println("ESP NOW 初始化成功");
@@ -249,7 +246,7 @@ void esp_now_connect() {
         reconnectSuccess  = true;
         esp_now_connected = true;
         // 成功指示灯提示
-        mutipleColorBlink(colors, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
+        mutipleColorBlink(colors, 3, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
         buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
         Serial.printf("重连第 %d 次成功\n", i + 1);
