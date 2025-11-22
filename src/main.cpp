@@ -86,17 +86,17 @@ OneButton functionButton;
 Adafruit_NeoPixel batteryRGB(1, WS2812_BATTERY_PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel systemRGB(1, WS2812_SYSTEM_PIN, NEO_GRB + NEO_KHZ800);
 
-uint32_t red    = batteryRGB.Color(255, 0, 0);   // 红色
-uint32_t green  = batteryRGB.Color(0, 255, 0);   // 绿色
-uint32_t blue   = batteryRGB.Color(0, 0, 255);   // 蓝色
-uint32_t cyan   = batteryRGB.Color(0, 180, 255); // 青色
-uint32_t yellow = batteryRGB.Color(255, 40, 0);  // 黄色
+int red    = batteryRGB.Color(255, 0, 0);   // 红色
+int green  = batteryRGB.Color(0, 255, 0);   // 绿色
+int blue   = batteryRGB.Color(0, 0, 255);   // 蓝色
+int cyan   = batteryRGB.Color(0, 180, 255); // 青色
+int yellow = batteryRGB.Color(255, 40, 0);  // 黄色
 
-uint32_t red_system    = systemRGB.Color(255, 0, 0);
-uint32_t green_system  = systemRGB.Color(0, 255, 0);
-uint32_t blue_system   = systemRGB.Color(0, 0, 255);
-uint32_t cyan_system   = systemRGB.Color(0, 180, 255);
-uint32_t yellow_system = systemRGB.Color(255, 40, 0);
+int red_system    = systemRGB.Color(255, 0, 0);
+int green_system  = systemRGB.Color(0, 255, 0);
+int blue_system   = systemRGB.Color(0, 0, 255);
+int cyan_system   = systemRGB.Color(0, 180, 255);
+int yellow_system = systemRGB.Color(255, 40, 0);
 
 /*----------------------------------------------- RGB LED-----------------------------------------------*/
 
@@ -176,10 +176,50 @@ void buzzer(uint8_t times, int duration, int interval) {
   }
 }
 
+/**  指示灯
+ * @brief     适用于单个颜色闪烁
+ * @param     pixel:    对象
+ * @param     times:    闪烁次数
+ * @param     duration: 持续时间，单位毫秒
+ * @param     interval: 每次闪烁的间隔时间，单位毫秒
+ * @param     color:    颜色值
+ */
+void rgbBlink(Adafruit_NeoPixel& pixel, int times, int duration, int interval, int color) {
+  if (times == 1) interval = 0; // 如果只闪烁一次则不间隔
+  for (int i = 0; i < times; i++) {
+    pixel.clear();
+    pixel.setPixelColor(0, color); // led编号和颜色，编号从0开始。
+    pixel.show();
+    vTaskDelay(duration / portTICK_PERIOD_MS);
+    pixel.clear();
+    pixel.show();
+    vTaskDelay(interval / portTICK_PERIOD_MS);
+  }
+}
+
+/**  通用多色闪烁函数
+ * @brief     适用于单个颜色闪烁
+ * @param     pixel:    对象
+ * @param     colors:    颜色数组
+ * @param     numColors: 颜色数量
+ */
+void mutipleColorBlink(Adafruit_NeoPixel& pixel, int colors[], int numColors, int duration, int interval) {
+  for (int i = 0; i < numColors; i++) {
+    pixel.clear();
+    pixel.setPixelColor(0, colors[i]);
+    pixel.show();
+    vTaskDelay(duration / portTICK_PERIOD_MS);
+    pixel.clear();
+    pixel.show();
+    vTaskDelay(interval / portTICK_PERIOD_MS);
+  }
+}
+
 // ESP NOW
 void esp_now_connect() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  int colors[] = { red_system, green_system, blue_system };
   if (esp_now_init() == ESP_OK) {
     esp_now_register_send_cb(OnDataSent);
     esp_now_register_recv_cb(OnDataRecv);
@@ -201,19 +241,7 @@ void esp_now_connect() {
       if (esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad)) == ESP_OK) {
         esp_now_connected = true;
         // 成功指示灯提示
-        systemRGB.clear();
-        systemRGB.setPixelColor(0, red_system);
-        systemRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        systemRGB.clear();
-        systemRGB.setPixelColor(0, green_system);
-        systemRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        systemRGB.clear();
-        systemRGB.setPixelColor(0, blue_system);
-        systemRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        systemRGB.clear();
+        mutipleColorBlink(systemRGB, colors, 3, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
         buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
         Serial.println("ESP NOW 初始化成功");
@@ -250,26 +278,14 @@ void esp_now_connect() {
         reconnectSuccess  = true;
         esp_now_connected = true;
         // 成功指示灯提示
-        systemRGB.clear();
-        systemRGB.setPixelColor(0, red_system);
-        systemRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        systemRGB.clear();
-        systemRGB.setPixelColor(0, green_system);
-        systemRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        systemRGB.clear();
-        systemRGB.setPixelColor(0, blue_system);
-        systemRGB.show();
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        systemRGB.clear();
+        mutipleColorBlink(systemRGB, colors, 3, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
         buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
         Serial.printf("重连第 %d 次成功\n", i + 1);
 #endif
         return; // 跳出for循环（可以理解为找到要找到的答案了）
       } else {
-        reconnectSuccess  = false;
+        reconnectSuccess = false;
       }
     }
     if (!reconnectSuccess) {
