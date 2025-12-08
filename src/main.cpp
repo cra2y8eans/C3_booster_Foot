@@ -569,7 +569,6 @@ void esp_now_connection(void* pvParameter) {
 void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(RGB_LED_PIN, OUTPUT);
 
   pinMode(STEP_TURN_LEFT, INPUT_PULLUP);
   pinMode(STEP_TURN_RIGHT, INPUT_PULLUP);
