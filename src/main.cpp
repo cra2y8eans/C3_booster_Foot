@@ -1,10 +1,8 @@
 #include "OneButton.h"
-#include "Wire.h"
 #include "batteryReading.hpp"
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <WiFi.h>
-#include <Wire.h>
 #include <esp_now.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -44,28 +42,19 @@ volatile bool esp_now_connected, recvSucceed;
 unsigned long lastSendTime = 0;
 #define CONNECTION_TIMEOUT 500
 
-/*----------------------------------------- MPU6050 & QMC5883P -----------------------------------------*/
-
-#define SDA_PIN 21
-#define SCL_PIN 22
-
-// MPU6050 mpu;
-// float yaw, gyro_Z; // Z轴角度，Z轴角速度
-// MPU6050 mpu6050(Wire);
-
 /*----------------------------------------------- 操控 -----------------------------------------------*/
 
-#define STEP_TURN_LEFT 32
-#define STEP_TURN_RIGHT 19
-#define THROTTLE_PIN 25
-#define FUNCTION_PIN 33
-#define STEP_SPEED 36
+#define STEP_TURN_LEFT 6
+#define STEP_TURN_RIGHT 5
+#define THROTTLE_PIN 3
+#define FUNCTION_PIN 7
+#define STEP_SPEED 0
 
 OneButton functionButton;
 
 /*---------------------------------------------- 蜂鸣器 ----------------------------------------------*/
 
-#define BUZZER_PIN 18
+#define BUZZER_PIN 10
 #define LONG_BEEP_DURATION 1000 // 长鸣时间
 #define SHORT_BEEP_DURATION 200 // 短鸣时间
 #define LONG_BEEP_INTERVAL 300  // 长鸣间隔时间
@@ -73,8 +62,8 @@ OneButton functionButton;
 
 /*----------------------------------------------- WS2812 -----------------------------------------------*/
 
-#define WS2812_BATTERY_PIN 17
-#define WS2812_SYSTEM_PIN -3
+#define WS2812_BATTERY_PIN 19
+#define WS2812_SYSTEM_PIN 18
 #define MAX_BRIGHTNESS 255
 #define MIN_BRIGHTNESS 0
 #define STANDARD_BRIGHTNESS 10
@@ -98,17 +87,9 @@ int blue_system   = systemRGB.Color(0, 0, 255);
 int cyan_system   = systemRGB.Color(0, 180, 255);
 int yellow_system = systemRGB.Color(255, 40, 0);
 
-/*----------------------------------------------- RGB LED-----------------------------------------------*/
-
-#define RGB_LED_PIN 12
-#define LONG_BLINK_DURATION 1000
-#define SHORT_BLINK_DURATION 200
-#define LONG_BLINK_INTERVAL 300
-#define SHORT_BLINK_INTERVAL 100
-
 /*----------------------------------------------- 电池电量 -----------------------------------------------*/
 
-#define BATTERY_PIN 39
+#define BATTERY_PIN 1
 #define BATTERY_VOLTAGE_MAX 4.2
 #define BATTERY_MAX_VALUE 4.2                  // 电池最大电量
 #define BATTERY_MIN_VALUE 3.2                  // 电池最小电量
