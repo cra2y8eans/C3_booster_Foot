@@ -121,7 +121,7 @@ BatteryState batteryState;
 
 float         batvolts, voltsPercentage;
 volatile bool batteryLED   = true;
-volatile bool usbConnected = false;
+volatile bool usbPluggedIn = false;
 
 BatReading battery;
 
@@ -177,6 +177,11 @@ void rgbBlink(int rgb_num, int times, int duration, int interval, int color) {
   }
 }
 // 多色闪烁
+/**  通用多色闪烁函数
+ * @brief     适用于单个颜色闪烁
+ * @param     colors:    颜色数组
+ * @param     colorNum: 颜色数量
+ */
 void mutipleColorBlink(int colors[], int colorNum, int duration, int interval) {
   for (int i = 0; i < colorNum; i++) {
     myRGB.clear();
@@ -204,6 +209,9 @@ void esp_now_connect() {
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
       buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
       esp_now_connected = false;
+      myRGB.clear();
+      myRGB.setPixelColor(0, red);
+      myRGB.show();
 #if DEBUG
       Serial.println("添加peer失败");
 #endif
@@ -220,6 +228,9 @@ void esp_now_connect() {
         return; // 成功就直接返回，不需要重连逻辑，直接跳出整个函数
       } else {
         esp_now_connected = false;
+        myRGB.clear();
+        myRGB.setPixelColor(0, red);
+        myRGB.show();
         buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
       }
     }
@@ -300,11 +311,11 @@ BatteryState batteryReading() {
   voltsPercentage = battery._voltsPercentage;
   if (voltsPercentage >= 80) {
     return FULL;
-  } else if (80 > voltsPercentage > 60) {
+  } else if (voltsPercentage >= 60) {
     return DECENT;
-  } else if (60 > voltsPercentage > 40) {
+  } else if (voltsPercentage >= 40) {
     return MODERATE;
-  } else if (40 > voltsPercentage > 20) {
+  } else if (voltsPercentage >= 20) {
     return DEPLETED;
   } else {
     return CRITICAL;
@@ -317,36 +328,36 @@ BatteryState batteryReading() {
  */
 void batteryFlash(BatteryState state) {
   if (batteryLED) {
+#if DEBUG
+    Serial.println("用户踩下按钮");
+    Serial.println("/*****************************/");
+    Serial.println("电池电量指示函数:");
+    Serial.print("电池电压: ");
+    Serial.print(batvolts);
+    Serial.print("V, 电量百分比: ");
+    Serial.print(voltsPercentage);
+    Serial.println("%");
+#endif
     switch (state) {
     case FULL:
-      myRGB.setPixelColor(0, blue);
-      break;
-    case DECENT:
       myRGB.setPixelColor(0, cyan);
       break;
-    case MODERATE:
+    case DECENT:
       myRGB.setPixelColor(0, green);
       break;
-    case DEPLETED:
+    case MODERATE:
       myRGB.setPixelColor(0, yellow);
+      break;
+    case DEPLETED:
+      myRGB.setPixelColor(0, red);
       break;
     default:
       break;
     }
-    myRGB.show();
-#if DEBUG
-    Serial.println("/*****************************/");
-    Serial.println("电池电量指示函数:");
-    Serial.print("电池电压: ");
-    Serial.print(battery._voltage);
-    Serial.print("V, 电量百分比: ");
-    Serial.print(battery._voltsPercentage);
-    Serial.println("%");
-#endif
   } else {
     myRGB.clear();
-    myRGB.show();
   }
+  myRGB.show();
 }
 
 /**  电量读取指示和报警任务
@@ -400,13 +411,13 @@ void batteryCheck(void* pvParameter) {
 #endif
       }
     }
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
 // usb状态改变中断处理函数
 void IRAM_ATTR handleUSBInterrupt() {
-  usbConnected = digitalRead(USB_PIN);
+  usbPluggedIn = digitalRead(USB_PIN);
 }
 
 // 数据发送任务
@@ -440,31 +451,44 @@ void dataTransmit(void* pvParameter) {
   }
 }
 
+// ESP NOW 连接检测任务
 void esp_now_connection(void* pvParameter) {
+  bool          lastConnectionState = false;
+  bool          blinkState          = false;
+  unsigned long lastBlinkTime       = 0;
   while (1) {
     unsigned long currentTime = millis();
-    esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);
-#if DEBUG
-    static unsigned long lastDebugTime = 0;
-    if (currentTime - lastDebugTime > 2000) { // 每2秒打印一次，避免刷屏
-      if (esp_now_connected && recvSucceed) {
-        Serial.println("连接检测任务：ESP NOW 接收发送正常！");
-      } else if (esp_now_connected && !recvSucceed) {
-        Serial.println("连接检测任务：ESP NOW 接收成功，但发送异常！");
-      } else if (!esp_now_connected && recvSucceed) {
-        Serial.println("连接检测任务：ESP NOW 接收超时，但发送成功！");
-      } else if (!esp_now_connected && !recvSucceed) {
-        Serial.println("连接检测任务：ESP NOW 彻底断线！");
+    esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT); // 判断是否连接：检查上次发送时间是否超时
+    // 状态变化时立即更新显示
+    if (lastConnectionState != esp_now_connected) {
+      lastConnectionState = esp_now_connected;
+      if (esp_now_connected && !batteryLED) {  // 只有在保持连接且电池指示灯关闭时才显示连接状态
+        // 连接恢复：蓝色常亮
+        blinkState = false;
+        myRGB.clear();
+        myRGB.setPixelColor(0, blue);
+        myRGB.show();
+      } else if (!esp_now_connected && !batteryLED) {  // 只有在断开连接且电池指示灯关闭时才显示断开连接状态
+        // 断开连接：立即显示红色
+        blinkState    = true;
+        lastBlinkTime = currentTime;
+        myRGB.clear();
+        myRGB.setPixelColor(0, red);
+        myRGB.show();
+        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
       }
-      lastDebugTime = currentTime;
     }
-#endif
-    if (esp_now_connected == true && usbConnected == false) {
-      digitalWrite(RGB_LED_PIN, LOW); // 共阳极RBG，低电平点亮
-    } else {
-      digitalWrite(RGB_LED_PIN, HIGH);
+    // 未连接时闪烁红色
+    if (!esp_now_connected) {
+      if (currentTime - lastBlinkTime > 300) {
+        lastBlinkTime = currentTime;
+        blinkState    = !blinkState;
+        myRGB.clear();
+        if (blinkState) myRGB.setPixelColor(0, red);
+        myRGB.show();
+      }
     }
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
 
@@ -474,7 +498,6 @@ void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(RGB_LED_PIN, OUTPUT);
-  // pinMode(WS2812_PIN, OUTPUT);
 
   pinMode(STEP_TURN_LEFT, INPUT_PULLUP);
   pinMode(STEP_TURN_RIGHT, INPUT_PULLUP);
