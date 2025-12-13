@@ -97,9 +97,9 @@ int yellow_system = systemRGB.Color(255, 40, 0);
 #define BATTERY_READING_INTERVAL 3 * 60 * 1000 // 采样间隔 3分钟*60秒*1000毫秒
 #define BATTERY_WARNING_INTERVAL 1 * 60 * 1000 // 低电量报警间隔
 #define BATTERY_LED_INTERVAL 30000             // 指示灯休眠间隔
-#define ON_CHARGE_PIN -1                       // TP4056X charge引脚
-#define STANDBY_PIN -2                         // TP4056X stdby引脚
-#define R1 9990                                // 上电阻 单位：欧姆
+#define ON_CHARGE_PIN 2                        // TP4056X charge引脚
+#define STANDBY_PIN 8                          // TP4056X stdby引脚
+#define R1 10010                               // 上电阻 单位：欧姆
 #define R2 9980                                // 下电阻 单位：欧姆
 
 enum BatteryState {
