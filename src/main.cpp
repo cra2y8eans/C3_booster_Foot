@@ -13,7 +13,8 @@
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
-uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // ESP32 RGB错接到usb_vbus版本
+// uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // ESP32 RGB错接到usb_vbus版本
+uint8_t BoosterAddress[] = { 0xb4, 0x3a, 0x45, 0x46, 0x87, 0xd0 }; // 电推ver2.0版本MAC地址
 
 // 创建ESP NOW通讯实例
 esp_now_peer_info_t peerInfo;
@@ -462,13 +463,13 @@ void esp_now_connection(void* pvParameter) {
     // 状态变化时立即更新显示
     if (lastConnectionState != esp_now_connected) {
       lastConnectionState = esp_now_connected;
-      if (esp_now_connected && !batteryLED) {  // 只有在保持连接且电池指示灯关闭时才显示连接状态
+      if (esp_now_connected && !batteryLED) { // 只有在保持连接且电池指示灯关闭时才显示连接状态
         // 连接恢复：蓝色常亮
         blinkState = false;
         myRGB.clear();
         myRGB.setPixelColor(0, blue);
         myRGB.show();
-      } else if (!esp_now_connected && !batteryLED) {  // 只有在断开连接且电池指示灯关闭时才显示断开连接状态
+      } else if (!esp_now_connected && !batteryLED) { // 只有在断开连接且电池指示灯关闭时才显示断开连接状态
         // 断开连接：立即显示红色
         blinkState    = true;
         lastBlinkTime = currentTime;
