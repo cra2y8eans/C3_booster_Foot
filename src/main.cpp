@@ -157,7 +157,7 @@ void buzzer(uint8_t times, int duration, int interval) {
   }
 }
 
-/**  指示灯
+/**  通用单色闪烁函数
  * @brief     适用于单个颜色闪烁
  * @param     times:    闪烁次数
  * @param     duration: 持续时间，单位毫秒
@@ -176,7 +176,7 @@ void rgbBlink(int rgb_num, int times, int duration, int interval, int color) {
     vTaskDelay(interval / portTICK_PERIOD_MS);
   }
 }
-// 多色闪烁
+
 /**  通用多色闪烁函数
  * @brief     适用于单个颜色闪烁
  * @param     colors:    颜色数组
