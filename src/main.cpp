@@ -43,7 +43,7 @@ FootPad footPad;
 volatile bool esp_now_connected, sendSucceed, recvSucceed;
 unsigned long lastSendTime = 0;         // 上次发送时间
 #define CONNECTION_TIMEOUT 500          // 连接超时时间，单位毫秒
-#define DISCONNECTED_BLINK_INTERVAL 300 // 断线指示灯闪烁间隔
+#define DISCONNECTED_BLINK_INTERVAL 500 // 断线指示灯闪烁间隔
 
 /*----------------------------------------- MPU6050 & QMC5883P -----------------------------------------*/
 
@@ -77,7 +77,7 @@ OneButton functionButton;
 #define WS2812_PIN 17
 #define MAX_BRIGHTNESS 255
 #define MIN_BRIGHTNESS 0
-#define STANDARD_BRIGHTNESS 10
+#define STANDARD_BRIGHTNESS 100
 #define SHORT_FLASH_DURATION 200
 #define SHORT_FLASH_INTERVAL 200
 #define LONG_FLASH_DURATION 500
@@ -211,7 +211,7 @@ void esp_now_connect() {
     myRGB.clear();
     myRGB.setPixelColor(0, red);
     myRGB.show();
-    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    // buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
     return;
   } else {
     Serial.println("ESP NOW 初始化成功");
@@ -226,7 +226,7 @@ void esp_now_connect() {
     myRGB.clear();
     myRGB.setPixelColor(0, red);
     myRGB.show();
-    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    // buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
     return;
   } else {
     Serial.println("ESP NOW 添加对等节点成功");
@@ -235,8 +235,11 @@ void esp_now_connect() {
   if (sendSucceed && recvSucceed) {
     Serial.println("ESP NOW 初始化，发送测试数据并接收成功");
     esp_now_connected = true;
+    myRGB.clear();
+    myRGB.setPixelColor(0, blue);
+    myRGB.show();
     mutipleColorBlink(colors, colorNum, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
-    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+    // buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
   } else {
     Serial.println("ESP NOW 发送失败，正在重试...");
     for (int i = 0; i < 60; i++) {
@@ -254,9 +257,12 @@ void esp_now_connect() {
         continue;
       }
       // 成功处理
+      myRGB.clear();
+      myRGB.setPixelColor(0, blue);
+      myRGB.show();
       esp_now_connected = true;
       mutipleColorBlink(colors, colorNum, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
-      buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+      // buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
       Serial.printf("第%d次重试成功\n", i + 1);
       return;
     }
@@ -267,7 +273,7 @@ void esp_now_connect() {
     myRGB.clear();
     myRGB.setPixelColor(0, red);
     myRGB.show();
-    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    // buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
   }
 }
 
@@ -447,70 +453,29 @@ void dataTransmit(void* pvParameter) {
 
 // ESP NOW 连接检测任务
 void esp_now_connection(void* pvParameter) {
-  bool          lastConnectionState = false;
-  bool          blinkState          = false;
-  unsigned long lastBlinkTime       = 0;
-  unsigned long lastBuzzerTime      = 0;
+  bool lastConnectionState = false;
   while (1) {
     unsigned long currentTime = millis();
-    esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);
-    // 连接状态显示控制
-    if (!batteryLED) {
-      // 连接状态变化处理
-      if (lastConnectionState != esp_now_connected) {
-        lastConnectionState = esp_now_connected;
+    esp_now_connected = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);  
+    // 只在连接状态变化时更新LED
+    if (lastConnectionState != esp_now_connected) {
+      lastConnectionState = esp_now_connected;    
+      if (!batteryLED) {  // 只有电池指示灯关闭时才显示连接状态
         if (esp_now_connected) {
           // 连接恢复：蓝色常亮
-          blinkState = false;
           myRGB.clear();
           myRGB.setPixelColor(0, blue);
           myRGB.show();
-#if DEBUG
-          Serial.println("ESP-NOW 连接恢复");
-#endif
         } else {
-          // 连接断开：立即显示红色并蜂鸣（带冷却）
-          blinkState    = true; // 设置为true，让第一次闪烁是亮
-          lastBlinkTime = currentTime;
+          // 连接断开：红色常亮（不闪烁）
           myRGB.clear();
           myRGB.setPixelColor(0, red);
           myRGB.show();
-          // 蜂鸣提醒，但限制频率
-          if (currentTime - lastBuzzerTime > 5000) { // 5秒冷却
-            buzzer(3, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-            lastBuzzerTime = currentTime;
-          }
-#if DEBUG
-          Serial.println("ESP-NOW 连接断开");
-#endif
+          buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
         }
-      }
-      // 已连接状态的持续保持（防止其他代码干扰）
-      if (esp_now_connected) {
-        if (!blinkState) { // 确保不是闪烁状态
-          myRGB.clear();
-          myRGB.setPixelColor(0, blue);
-          myRGB.show();
-        }
-      }
-      // 未连接状态的持续闪烁
-      else if (currentTime - lastBlinkTime > DISCONNECTED_BLINK_INTERVAL) {
-        lastBlinkTime = currentTime;
-        blinkState    = !blinkState;
-        myRGB.clear();
-        if (blinkState) {
-          myRGB.setPixelColor(0, red);
-        }
-        myRGB.show();
-      }
-    } else {
-      // 电池指示灯开启时，只更新状态，不显示连接状态
-      if (lastConnectionState != esp_now_connected) {
-        lastConnectionState = esp_now_connected;
       }
     }
-    // 动态调整任务延迟
-    vTaskDelay(esp_now_connected ? 200 : 50 / portTICK_PERIOD_MS);
+    vTaskDelay(200 / portTICK_PERIOD_MS);
   }
 }
 
@@ -527,6 +492,7 @@ void setup() {
   pinMode(FUNCTION_PIN, INPUT_PULLUP);
   pinMode(USB_PIN, INPUT_PULLDOWN);
 
+  digitalWrite(RGB_LED_PIN, HIGH); // 关闭板载RGB LED
   analogReadResolution(12);
   myRGB.begin();
   myRGB.setBrightness(STANDARD_BRIGHTNESS);
@@ -538,7 +504,7 @@ void setup() {
 
   xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
-  xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 1, NULL, 1, NULL);
+  xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 3, NULL, 1, NULL);
 
 #if DEBUG
   Serial.println("脚控初始化完成");
