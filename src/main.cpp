@@ -40,9 +40,10 @@ struct FootPad {
 };
 FootPad footPad;
 
-volatile bool esp_now_connected, recvSucceed;
-unsigned long lastSendTime = 0;
-#define CONNECTION_TIMEOUT 500
+volatile bool esp_now_connected, sendSucceed, recvSucceed;
+unsigned long lastSendTime = 0;         // 上次发送时间
+#define CONNECTION_TIMEOUT 500          // 连接超时时间，单位毫秒
+#define DISCONNECTED_BLINK_INTERVAL 300 // 断线指示灯闪烁间隔
 
 /*----------------------------------------- MPU6050 & QMC5883P -----------------------------------------*/
 
@@ -133,6 +134,9 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
   // 如果发送成功
   if (status == ESP_NOW_SEND_SUCCESS) {
     lastSendTime = millis();
+    if (!sendSucceed) sendSucceed = true;
+  } else {
+    sendSucceed = false;
   }
 }
 
@@ -195,86 +199,75 @@ void mutipleColorBlink(int colors[], int colorNum, int duration, int interval) {
   }
 }
 
-// ESP NOW
+// ESP NOW 初始化
 void esp_now_connect() {
+  int colors[] = { red, green, blue };
+  int colorNum = 3;
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  int colors[] = { red, green, blue };
-  if (esp_now_init() == ESP_OK) {
-    esp_now_register_send_cb(OnDataSent);
-    esp_now_register_recv_cb(OnDataRecv);
-    // 注册通信频道
-    memcpy(peerInfo.peer_addr, BoosterAddress, 6);
-    peerInfo.channel = 1;
-    // 主初始化错误检查
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-      buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-      esp_now_connected = false;
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP NOW 初始化失败");
+    esp_now_connected = false;
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    return;
+  } else {
+    Serial.println("ESP NOW 初始化成功");
+  }
+  esp_now_register_send_cb(OnDataSent);
+  esp_now_register_recv_cb(OnDataRecv);
+  memcpy(peerInfo.peer_addr, BoosterAddress, 6);
+  peerInfo.channel = 1;
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("ESP NOW 添加对等节点失败");
+    esp_now_connected = false;
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    return;
+  } else {
+    Serial.println("ESP NOW 添加对等节点成功");
+  }
+  esp_now_send(BoosterAddress, (uint8_t*)&booster, sizeof(booster));
+  if (sendSucceed && recvSucceed) {
+    Serial.println("ESP NOW 初始化，发送测试数据并接收成功");
+    esp_now_connected = true;
+    mutipleColorBlink(colors, colorNum, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
+    buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+  } else {
+    Serial.println("ESP NOW 发送失败，正在重试...");
+    for (int i = 0; i < 60; i++) {
+      // 状态指示：红灯闪烁表示正在尝试连接
       myRGB.clear();
       myRGB.setPixelColor(0, red);
       myRGB.show();
-#if DEBUG
-      Serial.println("添加peer失败");
-#endif
-    } else {
-      // 测试连接
-      if (esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad)) == ESP_OK) {
-        esp_now_connected = true;
-        // 成功指示灯提示
-        mutipleColorBlink(colors, 3, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
-        buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-#if DEBUG
-        Serial.println("ESP NOW 初始化成功");
-#endif
-        return; // 成功就直接返回，不需要重连逻辑，直接跳出整个函数
-      } else {
-        esp_now_connected = false;
-        myRGB.clear();
-        myRGB.setPixelColor(0, red);
-        myRGB.show();
-        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      myRGB.clear();
+      myRGB.show();
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      esp_now_send(BoosterAddress, (uint8_t*)&booster, sizeof(booster));
+      if (!sendSucceed || !recvSucceed) {
+        Serial.print(".");
+        continue;
       }
+      // 成功处理
+      esp_now_connected = true;
+      mutipleColorBlink(colors, colorNum, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
+      buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+      Serial.printf("第%d次重试成功\n", i + 1);
+      return;
     }
-  } else {
+    Serial.println("ESP NOW 发送失败，重试次数已达上限");
     esp_now_connected = false;
-  }
-  if (!esp_now_connected) {
-#if DEBUG
-    Serial.println("ESP NOW 初始化失败，正在重连...");
-#endif
-    // 尝试重连3次
-    bool reconnectSuccess = false;
-    for (int i = 0; i < 3; i++) {
-#if DEBUG
-      Serial.printf("重连第 %d 次...\n", i + 1);
-#endif
-      esp_now_init();
-      esp_now_register_send_cb(OnDataSent);
-      esp_now_register_recv_cb(OnDataRecv);
-      memcpy(peerInfo.peer_addr, BoosterAddress, 6);
-      peerInfo.channel = 1;
-      // 测试连接
-      if (esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad)) == ESP_OK) {
-        reconnectSuccess  = true;
-        esp_now_connected = true;
-        // 成功指示灯提示
-        mutipleColorBlink(colors, 3, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
-        buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
-#if DEBUG
-        Serial.printf("重连第 %d 次成功\n", i + 1);
-#endif
-        return; // 跳出for循环（可以理解为找到要找到的答案了）
-      } else {
-        reconnectSuccess = false;
-      }
-    }
-    if (!reconnectSuccess) {
-      esp_now_connected = false;
-      buzzer(5, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL); // 长时间错误提示
-#if DEBUG
-      Serial.println("ESP NOW 重连失败");
-#endif
-    }
+    sendSucceed       = false;
+    recvSucceed       = false;
+    myRGB.clear();
+    myRGB.setPixelColor(0, red);
+    myRGB.show();
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
   }
 }
 
@@ -457,39 +450,67 @@ void esp_now_connection(void* pvParameter) {
   bool          lastConnectionState = false;
   bool          blinkState          = false;
   unsigned long lastBlinkTime       = 0;
+  unsigned long lastBuzzerTime      = 0;
   while (1) {
     unsigned long currentTime = millis();
-    esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT); // 判断是否连接：检查上次发送时间是否超时
-    // 状态变化时立即更新显示
-    if (lastConnectionState != esp_now_connected) {
-      lastConnectionState = esp_now_connected;
-      if (esp_now_connected && !batteryLED) { // 只有在保持连接且电池指示灯关闭时才显示连接状态
-        // 连接恢复：蓝色常亮
-        blinkState = false;
-        myRGB.clear();
-        myRGB.setPixelColor(0, blue);
-        myRGB.show();
-      } else if (!esp_now_connected && !batteryLED) { // 只有在断开连接且电池指示灯关闭时才显示断开连接状态
-        // 断开连接：立即显示红色
-        blinkState    = true;
-        lastBlinkTime = currentTime;
-        myRGB.clear();
-        myRGB.setPixelColor(0, red);
-        myRGB.show();
-        buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+    esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);
+    // 连接状态显示控制
+    if (!batteryLED) {
+      // 连接状态变化处理
+      if (lastConnectionState != esp_now_connected) {
+        lastConnectionState = esp_now_connected;
+        if (esp_now_connected) {
+          // 连接恢复：蓝色常亮
+          blinkState = false;
+          myRGB.clear();
+          myRGB.setPixelColor(0, blue);
+          myRGB.show();
+#if DEBUG
+          Serial.println("ESP-NOW 连接恢复");
+#endif
+        } else {
+          // 连接断开：立即显示红色并蜂鸣（带冷却）
+          blinkState    = true; // 设置为true，让第一次闪烁是亮
+          lastBlinkTime = currentTime;
+          myRGB.clear();
+          myRGB.setPixelColor(0, red);
+          myRGB.show();
+          // 蜂鸣提醒，但限制频率
+          if (currentTime - lastBuzzerTime > 5000) { // 5秒冷却
+            buzzer(3, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
+            lastBuzzerTime = currentTime;
+          }
+#if DEBUG
+          Serial.println("ESP-NOW 连接断开");
+#endif
+        }
       }
-    }
-    // 未连接时闪烁红色
-    if (!esp_now_connected) {
-      if (currentTime - lastBlinkTime > 300) {
+      // 已连接状态的持续保持（防止其他代码干扰）
+      if (esp_now_connected) {
+        if (!blinkState) { // 确保不是闪烁状态
+          myRGB.clear();
+          myRGB.setPixelColor(0, blue);
+          myRGB.show();
+        }
+      }
+      // 未连接状态的持续闪烁
+      else if (currentTime - lastBlinkTime > DISCONNECTED_BLINK_INTERVAL) {
         lastBlinkTime = currentTime;
         blinkState    = !blinkState;
         myRGB.clear();
-        if (blinkState) myRGB.setPixelColor(0, red);
+        if (blinkState) {
+          myRGB.setPixelColor(0, red);
+        }
         myRGB.show();
       }
+    } else {
+      // 电池指示灯开启时，只更新状态，不显示连接状态
+      if (lastConnectionState != esp_now_connected) {
+        lastConnectionState = esp_now_connected;
+      }
     }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    // 动态调整任务延迟
+    vTaskDelay(esp_now_connected ? 200 : 50 / portTICK_PERIOD_MS);
   }
 }
 
