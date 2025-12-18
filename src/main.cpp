@@ -175,7 +175,7 @@ void rgbBlink(int rgb_num, int times, int duration, int interval, int color) {
     myRGB.setPixelColor(0, color); // led编号和颜色，编号从0开始。
     myRGB.show();
     vTaskDelay(duration / portTICK_PERIOD_MS);
-    myRGB.setPixelColor(0, 0);
+    myRGB.clear();
     myRGB.show();
     vTaskDelay(interval / portTICK_PERIOD_MS);
   }
@@ -257,9 +257,6 @@ void esp_now_connect() {
   if (esp_now_init() != ESP_OK) {
     Serial.println("ESP NOW 初始化失败");
     esp_now_connected = false;
-    myRGB.clear();
-    myRGB.setPixelColor(0, red);
-    myRGB.show();
     return;
   } else {
     Serial.println("ESP NOW 初始化成功");
@@ -271,9 +268,6 @@ void esp_now_connect() {
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
     Serial.println("ESP NOW 添加对等节点失败");
     esp_now_connected = false;
-    myRGB.clear();
-    myRGB.setPixelColor(0, red);
-    myRGB.show();
     return;
   } else {
     Serial.println("ESP NOW 添加对等节点成功");
@@ -282,10 +276,8 @@ void esp_now_connect() {
   if (sendSucceed && recvSucceed) {
     Serial.println("ESP NOW 初始化，发送测试数据并接收成功");
     esp_now_connected = true;
-    myRGB.clear();
-    myRGB.setPixelColor(0, blue);
-    myRGB.show();
     mutipleColorBlink(colors, colorNum, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
+    myRGB.clear();
   } else {
     Serial.println("ESP NOW 发送失败，正在重试...");
     for (int i = 0; i < 60; i++) {
@@ -303,11 +295,9 @@ void esp_now_connect() {
         continue;
       }
       // 成功处理
-      myRGB.clear();
-      myRGB.setPixelColor(0, blue);
-      myRGB.show();
       esp_now_connected = true;
       mutipleColorBlink(colors, colorNum, LONG_FLASH_DURATION, LONG_FLASH_INTERVAL);
+      myRGB.clear();
       Serial.printf("第%d次重试成功\n", i + 1);
       return;
     }
@@ -315,9 +305,6 @@ void esp_now_connect() {
     esp_now_connected = false;
     sendSucceed       = false;
     recvSucceed       = false;
-    myRGB.clear();
-    myRGB.setPixelColor(0, red);
-    myRGB.show();
   }
 }
 
@@ -356,8 +343,7 @@ void ws2812b_task(void* pvParameters) {
     // 电量指示
     if (batteryLED) {
       unsigned long currentTime = millis();
-      if (currentTime - lastBatteryLEDTime > BATTERY_LED_INTERVAL) {
-        lastBatteryLEDTime = currentTime;
+      if (currentTime - lastBatteryLEDTime < BATTERY_LED_INTERVAL) {
         myRGB.clear();
         // 根据电量状态设置颜色
         switch (batteryState) {
@@ -377,49 +363,55 @@ void ws2812b_task(void* pvParameters) {
           break;
         }
         myRGB.show();
-        batteryLED = false;
+      } else {
+        myRGB.clear();
+        lastBatteryLEDTime = currentTime;
+        batteryLED         = false;
       }
     } else {
-      if (lastConnectionState != esp_now_connected) {
-        lastConnectionState = esp_now_connected;
-        if (esp_now_connected) {
-          rgbInfiniteBlink(LONG_FLASH_INTERVAL, blue);
-        } else {
-          myRGB.clear();
-          myRGB.setPixelColor(0, red);
-          myRGB.show();
-        }
+      if (esp_now_connected) {
+        myRGB.clear();
+        myRGB.setPixelColor(0, blue);
+        myRGB.show();
+      } else {
+        myRGB.clear();
+        myRGB.setPixelColor(0, red);
+        myRGB.show();
       }
     }
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
-/**  电量读取指示和报警任务
+/**  电量读取
  * @brief     上电/按键唤醒显示电量30秒后自动休眠，低于设定阈值后循环报警
  * @param     R1: 分压电阻R1阻值
  * @param     R2: 分压电阻R2阻值
  * @param     voltsPercentage: 电量百分比
  * @param     batvolts: 电压值
  */
+void bateryReading() {
+  battery.readMilliVolts(BATTERY_READING_AVERAGE);
+  batvolts        = battery._voltage;
+  voltsPercentage = battery._voltsPercentage;
+  if (voltsPercentage >= 80) {
+    batteryState = FULL;
+  } else if (voltsPercentage >= 60) {
+    batteryState = DECENT;
+  } else if (voltsPercentage >= 40) {
+    batteryState = MODERATE;
+  } else if (voltsPercentage >= 20) {
+    batteryState = DEPLETED;
+  } else {
+    batteryState = CRITICAL;
+    buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
+  }
+}
+
+//  电量读取任务
 void batteryCheck(void* pvParameter) {
-  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
   while (1) {
-    battery.readMilliVolts(BATTERY_READING_AVERAGE);
-    batvolts        = battery._voltage;
-    voltsPercentage = battery._voltsPercentage;
-    if (voltsPercentage >= 80) {
-      batteryState = FULL;
-    } else if (voltsPercentage >= 60) {
-      batteryState = DECENT;
-    } else if (voltsPercentage >= 40) {
-      batteryState = MODERATE;
-    } else if (voltsPercentage >= 20) {
-      batteryState = DEPLETED;
-    } else {
-      batteryState = CRITICAL;
-      buzzer(3, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
-    }
+    bateryReading();
     vTaskDelay(voltsPercentage * BATTERY_READING_INTERVAL / portTICK_PERIOD_MS); // 电量越低读取越频繁
   }
 }
@@ -479,21 +471,24 @@ void setup() {
   pinMode(FUNCTION_PIN, INPUT_PULLUP);
   pinMode(USB_PIN, INPUT_PULLDOWN);
 
-  digitalWrite(RGB_LED_PIN, HIGH); // 关闭板载RGB LED
   analogReadResolution(12);
   myRGB.begin();
   myRGB.setBrightness(STANDARD_BRIGHTNESS);
 
   esp_now_connect();
+  battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
+  bateryReading();             // 初始化时读取一次电量
   footPad.stepData[3] = false; // 功能键初始状态为假
   batteryLED          = true;  // 上电时显示电量指示灯
 
   attachInterrupt(USB_PIN, handleUSBInterrupt, CHANGE);
 
-  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 2, NULL);
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // 延时等待系统稳定
+
+  xTaskCreate(ws2812b_task, "ws2812b_task", 1024 * 2, NULL, 1, NULL);
+  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
   xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 2, NULL, 1, NULL);
-  xTaskCreate(ws2812b_task, "ws2812b_task", 1024 * 2, NULL, 1, NULL);
 
 #if DEBUG
   Serial.println("脚控初始化完成");
