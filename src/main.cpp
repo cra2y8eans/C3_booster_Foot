@@ -385,7 +385,9 @@ void ws2812b_task(void* pvParameters) {
         if (esp_now_connected) {
           rgbInfiniteBlink(LONG_FLASH_INTERVAL, blue);
         } else {
-          rgbInfiniteBlink(LONG_FLASH_INTERVAL, red);
+          myRGB.clear();
+          myRGB.setPixelColor(0, red);
+          myRGB.show();
         }
       }
     }
@@ -455,8 +457,8 @@ void dataTransmit(void* pvParameter) {
 
 // ESP NOW 连接检测任务
 void esp_now_connection(void* pvParameter) {
-  TickType_t       xLastWakeTime       = xTaskGetTickCount();
-  const TickType_t xPeriod             = pdMS_TO_TICKS(1000); // 单位ms，数据检测频率为1Hz。换算为频率： 1Hz → 周期为 1000ms/1000ms = 1 次/秒
+  TickType_t       xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xPeriod       = pdMS_TO_TICKS(1000); // 单位ms，数据检测频率为1Hz。换算为频率： 1Hz → 周期为 1000ms/1000ms = 1 次/秒
   while (1) {
     unsigned long currentTime = millis();
     esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);
