@@ -338,7 +338,6 @@ void IRAM_ATTR handleUSBInterrupt() {
 // WS2812系统状态及电量指示任务
 void ws2812b_task(void* pvParameters) {
   unsigned long lastBatteryLEDTime  = 0;
-  bool          lastConnectionState = false;
   while (1) {
     // 电量指示
     if (batteryLED) {
@@ -380,15 +379,6 @@ void ws2812b_task(void* pvParameters) {
       }
     }
     vTaskDelay(100 / portTICK_PERIOD_MS);
-
-    // 栈使用情况监控
-    static unsigned long lastStackCheck = 0;
-    unsigned long currentTime = millis();
-    if (currentTime - lastStackCheck > 5000) { // 每5秒检查一次
-      UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf("ws2812b_task 栈剩余: %u 字节\n", stackHighWaterMark);
-      lastStackCheck = currentTime;
-    }
   }
 }
 
@@ -422,15 +412,6 @@ void batteryCheck(void* pvParameter) {
   while (1) {
     bateryReading();
     vTaskDelay(voltsPercentage * BATTERY_READING_INTERVAL / portTICK_PERIOD_MS); // 电量越低读取越频繁
-
-    // 栈使用情况监控
-    static unsigned long lastStackCheck = 0;
-    unsigned long currentTime = millis();
-    if (currentTime - lastStackCheck > 5000) { // 每5秒检查一次
-      UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf("batteryCheck 栈剩余: %u 字节\n", stackHighWaterMark);
-      lastStackCheck = currentTime;
-    }
   }
 }
 
@@ -462,15 +443,6 @@ void dataTransmit(void* pvParameter) {
 #endif
     esp_now_send(BoosterAddress, (uint8_t*)&footPad, sizeof(footPad));
     vTaskDelayUntil(&xLastWakeTime, xPeriod);
-
-    // 栈使用情况监控
-    static unsigned long lastStackCheck = 0;
-    unsigned long currentTime = millis();
-    if (currentTime - lastStackCheck > 5000) { // 每5秒检查一次
-      UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf("dataTransmit 栈剩余: %u 字节\n", stackHighWaterMark);
-      lastStackCheck = currentTime;
-    }
   }
 }
 
@@ -481,16 +453,8 @@ void esp_now_connection(void* pvParameter) {
   while (1) {
     unsigned long currentTime = millis();
     esp_now_connected         = (currentTime - lastSendTime <= CONNECTION_TIMEOUT);
-    vTaskDelayUntil(&xLastWakeTime, xPeriod);
-
-    // 栈使用情况监控
-    static unsigned long lastStackCheck = 0;
-    if (currentTime - lastStackCheck > 5000) { // 每5秒检查一次
-      UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf("esp_now_connection 栈剩余: %u 字节\n", stackHighWaterMark);
-      lastStackCheck = currentTime;
-    }
   }
+  vTaskDelayUntil(&xLastWakeTime, xPeriod);
 }
 
 /*-------------------------------------------------------------------------------------------------------------*/
@@ -510,14 +474,6 @@ void setup() {
   myRGB.begin();
   myRGB.setBrightness(STANDARD_BRIGHTNESS);
 
-  // 启用栈溢出检测
-  #if DEBUG
-  vTaskSetStackOverflowHook([](TaskHandle_t xTask, char *pcTaskName) {
-    Serial.printf("栈溢出检测: 任务 %s 发生栈溢出!\n", pcTaskName);
-    // 可以在这里添加重启或报警逻辑
-  });
-  #endif
-
   esp_now_connect();
   battery.init(BATTERY_PIN, R1, R2, BATTERY_MAX_VALUE, BATTERY_MIN_VALUE);
   bateryReading();             // 初始化时读取一次电量
@@ -528,10 +484,10 @@ void setup() {
 
   vTaskDelay(1000 / portTICK_PERIOD_MS); // 延时等待系统稳定
 
-  xTaskCreate(ws2812b_task, "ws2812b_task", 1024 * 2, NULL, 1, NULL);
-  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 2, NULL, 1, NULL);
-  xTaskCreate(batteryCheck, "batteryCheck", 1024 * 2, NULL, 1, NULL);
-  xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 2, NULL, 1, NULL);
+  xTaskCreate(ws2812b_task, "ws2812b_task", 1024 * 4, NULL, 1, NULL);
+  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 4, NULL, 1, NULL);
+  xTaskCreate(batteryCheck, "batteryCheck", 1024 * 4, NULL, 1, NULL);
+  xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 4, NULL, 1, NULL);
 
 #if DEBUG
   Serial.println("脚控初始化完成");
