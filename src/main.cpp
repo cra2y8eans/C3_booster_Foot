@@ -13,7 +13,6 @@
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
-// uint8_t BoosterAddress[] = { 0x9c, 0x13, 0x9e, 0x55, 0x1b, 0xa8 }; // ESP32 RGB错接到usb_vbus版本
 uint8_t BoosterAddress[] = { 0xb4, 0x3a, 0x45, 0x46, 0x87, 0xd0 }; // 电推ver2.0版本MAC地址
 
 // 创建ESP NOW通讯实例
@@ -49,10 +48,6 @@ unsigned long lastSendTime = 0; // 上次发送时间
 
 #define SDA_PIN 21
 #define SCL_PIN 22
-
-// MPU6050 mpu;
-// float yaw, gyro_Z; // Z轴角度，Z轴角速度
-// MPU6050 mpu6050(Wire);
 
 /*----------------------------------------------- 操控 -----------------------------------------------*/
 
@@ -313,9 +308,7 @@ void longPressed_callback() {
   footPad.stepData[3] = !footPad.stepData[3];
   buzzer(1, LONG_BEEP_DURATION, LONG_BEEP_INTERVAL);
 #if DEBUG
-  if (footPad.stepData[3]) {
-    Serial.println("功能键长按");
-  }
+  Serial.println("功能键长按");
 #endif
 }
 
@@ -324,9 +317,8 @@ void shortPressed_callback() {
   batteryLED = true;
   buzzer(1, SHORT_BEEP_DURATION, SHORT_BEEP_INTERVAL);
 #if DEBUG
-  if (footPad.stepData[3]) {
-    Serial.println("功能键短按");
-  }
+  Serial.println("功能键短按");
+  Serial.println(batteryLED ? "短按回调：开启电量指示" : "短按回调：关闭电量指示");
 #endif
 }
 
@@ -337,8 +329,13 @@ void IRAM_ATTR handleUSBInterrupt() {
 
 // WS2812系统状态及电量指示任务
 void ws2812b_task(void* pvParameters) {
-  unsigned long lastBatteryLEDTime  = 0;
+  unsigned long lastBatteryLEDTime = 0;
+  functionButton.setup(FUNCTION_PIN, INPUT_PULLUP);
+  functionButton.attachLongPressStart(longPressed_callback);
+  functionButton.attachClick(shortPressed_callback);
+  functionButton.setPressMs(800);
   while (1) {
+    functionButton.tick();
     // 电量指示
     if (batteryLED) {
       unsigned long currentTime = millis();
@@ -366,6 +363,9 @@ void ws2812b_task(void* pvParameters) {
         myRGB.clear();
         lastBatteryLEDTime = currentTime;
         batteryLED         = false;
+#if DEBUG
+        Serial.println(batteryLED ? "WS2812任务：开启电量指示" : "WS2812任务：关闭电量指示");
+#endif
       }
     } else {
       if (esp_now_connected) {
@@ -417,14 +417,9 @@ void batteryCheck(void* pvParameter) {
 
 // 数据发送任务
 void dataTransmit(void* pvParameter) {
-  functionButton.setup(FUNCTION_PIN, INPUT_PULLUP);
-  functionButton.attachLongPressStart(longPressed_callback);
-  functionButton.attachClick(shortPressed_callback);
-  functionButton.setPressMs(800);
   TickType_t       xLastWakeTime = xTaskGetTickCount();
   const TickType_t xPeriod       = pdMS_TO_TICKS(20); // 单位ms，数据发送频率为50Hz。换算为频率： 50Hz → 周期为 1000ms/20ms = 50 次/秒
   while (1) {
-    functionButton.tick();
     footPad.stepData[0] = digitalRead(STEP_TURN_LEFT);  // 左转
     footPad.stepData[1] = digitalRead(STEP_TURN_RIGHT); // 右转
     footPad.stepData[2] = digitalRead(THROTTLE_PIN);    // 电推油门
@@ -484,10 +479,10 @@ void setup() {
 
   vTaskDelay(1000 / portTICK_PERIOD_MS); // 延时等待系统稳定
 
-  xTaskCreate(ws2812b_task, "ws2812b_task", 1024 * 4, NULL, 1, NULL);
-  xTaskCreate(dataTransmit, "dataTransmit", 1024 * 4, NULL, 1, NULL);
-  xTaskCreate(batteryCheck, "batteryCheck", 1024 * 4, NULL, 1, NULL);
-  xTaskCreate(esp_now_connection, "esp_now_connection", 1024 * 4, NULL, 1, NULL);
+  xTaskCreatePinnedToCore(ws2812b_task, "ws2812b_task", 1024 * 4, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(dataTransmit, "dataTransmit", 1024 * 4, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(batteryCheck, "batteryCheck", 1024 * 4, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(esp_now_connection, "esp_now_connection", 1024 * 4, NULL, 1, NULL, 1);
 
 #if DEBUG
   Serial.println("脚控初始化完成");
