@@ -13,7 +13,8 @@
 
 /*----------------------------------------------- ESP NOW-----------------------------------------------*/
 
-uint8_t BoosterAddress[] = { 0xb4, 0x3a, 0x45, 0x46, 0x87, 0xd0 }; // 电推ver2.0版本MAC地址
+// uint8_t BoosterAddress[] = { 0xb4, 0x3a, 0x45, 0x46, 0x87, 0xd0 }; // 电推ver2.0版本MAC地址
+uint8_t BoosterAddress[] = { 0x54, 0x32, 0x04, 0x73, 0xe1, 0xd0 }; // H桥测试版MAC地址
 
 // 创建ESP NOW通讯实例
 esp_now_peer_info_t peerInfo;
